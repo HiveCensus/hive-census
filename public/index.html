@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#07111f">
+  <title>Hive Census — Where in the world is Hive?</title>
+  <link rel="preconnect" href="https://unpkg.com">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <a class="brand" href="#"><span class="mark">⬡</span><strong>HIVE</strong> CENSUS</a>
+    <nav><a href="#map">Map</a><a href="#join">Join Census</a><a href="#about">About</a></nav>
+    <button id="connectBtn" class="primary">Connect Hive Keychain</button>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <span class="eyebrow">ON-CHAIN COMMUNITY MAP</span>
+        <h1>Where in the world is <em>Hive?</em></h1>
+        <p>Hive Census is an open, community-built map. Choose the place you call home and publish your declaration directly to the Hive blockchain.</p>
+        <div class="actions">
+          <a class="primary linkbtn" href="#join">Add my location</a>
+          <a class="secondary linkbtn" href="#map">Explore the map</a>
+        </div>
+        <div class="note">No GPS. No Census account. Your Hive account signs the declaration.</div>
+      </div>
+      <div class="hero-card">
+        <div class="globe">🌍</div>
+        <div class="pulse p1">12</div><div class="pulse p2">31</div><div class="pulse p3">8</div>
+        <p>One protocol.<br>Any frontend.</p>
+      </div>
+    </section>
+
+    <section id="map" class="panel">
+      <div class="section-head">
+        <div><span class="eyebrow">EXPLORE</span><h2>Community map</h2></div>
+        <span class="muted">Live Census indexing comes in the next milestone.</span>
+      </div>
+      <div id="mapCanvas"></div>
+    </section>
+
+    <section id="join" class="join-grid">
+      <div class="panel">
+        <span class="eyebrow">JOIN CENSUS</span>
+        <h2>Publish your location</h2>
+        <p class="muted">This MVP uses city search to obtain a locality and its centre coordinates. Nothing is published until you confirm it in Hive Keychain.</p>
+
+        <label>Hive account</label>
+        <div class="row">
+          <input id="account" placeholder="@username" autocomplete="off">
+          <button id="handshakeBtn" class="secondary">Check Keychain</button>
+        </div>
+
+        <label>City or town</label>
+        <div class="row">
+          <input id="placeQuery" placeholder="e.g. Katowice, Poland">
+          <button id="searchBtn" class="secondary">Search</button>
+        </div>
+        <div id="results" class="results"></div>
+
+        <div id="selection" class="selection hidden"></div>
+
+        <label class="check"><input id="permanentAck" type="checkbox"> I understand that this declaration will be permanently stored on the public Hive blockchain and cannot truly be deleted.</label>
+        <button id="publishBtn" class="primary wide" disabled>Sign & publish with Posting Key</button>
+        <div id="status" class="status"></div>
+      </div>
+
+      <aside class="panel protocol">
+        <span class="eyebrow">HIVE CENSUS PROTOCOL</span>
+        <h2>What will be signed?</h2>
+        <pre id="jsonPreview">Select a location to preview the custom_json.</pre>
+        <div class="kv"><span>custom_json ID</span><code>hive_census</code></div>
+        <div class="kv"><span>Authority</span><code>Posting</code></div>
+        <div class="kv"><span>Protocol</span><code>v1</code></div>
+        <p class="muted small">The application never asks for your private key. Hive Keychain presents the transaction for your approval.</p>
+      </aside>
+    </section>
+
+    <section id="about" class="about">
+      <span class="eyebrow">PHILOSOPHY</span>
+      <h2>The website is only an interface.</h2>
+      <p>The source of truth is Hive. If this website disappears, another application can read compatible <code>hive_census</code> operations and rebuild the Census.</p>
+    </section>
+  </main>
+
+  <footer>Hive Census · experimental open protocol · v0.1 MVP</footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
