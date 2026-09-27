@@ -2,35 +2,38 @@ const HIVE_RPC = "https://api.hive.blog";
 const CENSUS_ID = "hive_census";
 const PROTOCOL_VERSION = 1;
 
-// Ile bloków skanujemy przy jednym ręcznym wywołaniu.
-// Hive produkuje blok mniej więcej co 3 sekundy.
-const DEFAULT_SCAN_BLOCKS = 2000;
-const MAX_SCAN_BLOCKS = 5000;
+// Bezpieczna liczba bloków dla pojedynczego wywołania Workera.
+// Przy nadrabianiu historii będziemy wykonywać kolejne porcje.
+const DEFAULT_SCAN_BLOCKS = 200;
+const MAX_SCAN_BLOCKS = 500;
 const BLOCK_BATCH_SIZE = 100;
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // ---------------------------------------------------------
-    // STATUS
-    // ---------------------------------------------------------
+    // ========================================================
+    // STATUS WORKERA
+    // ========================================================
 
     if (url.pathname === "/api/status") {
       return json({
         ok: true,
         service: "Hive Census",
-        version: "0.6.1",
+        version: "0.6.2",
         database: Boolean(env.DB),
         assets: Boolean(env.ASSETS)
       });
     }
 
-    // ---------------------------------------------------------
+    // ========================================================
     // CURRENT CENSUS
-    // ---------------------------------------------------------
+    // ========================================================
 
-    if (url.pathname === "/api/census" && request.method === "GET") {
+    if (
+      url.pathname === "/api/census" &&
+      request.method === "GET"
+    ) {
       try {
         const result = await env.DB.prepare(`
           SELECT
@@ -59,13 +62,16 @@ export default {
       }
     }
 
-    // ---------------------------------------------------------
+    // ========================================================
     // INDEXER STATUS
-    // ---------------------------------------------------------
+    // ========================================================
 
     if (url.pathname === "/api/indexer/status") {
       try {
-        const lastScanned = await getMeta(env.DB, "last_scanned_block");
+        const lastScanned = await getMeta(
+          env.DB,
+          "last_scanned_block"
+        );
 
         const countResult = await env.DB.prepare(`
           SELECT COUNT(*) AS count
@@ -79,36 +85,36 @@ export default {
 
         return json({
           ok: true,
+          version: "0.6.2",
           last_scanned_block:
-            lastScanned === null ? null : Number(lastScanned),
-          head_block_number: Number(props.head_block_number),
-          census_accounts: Number(countResult?.count || 0)
+            lastScanned === null
+              ? null
+              : Number(lastScanned),
+          head_block_number:
+            Number(props.head_block_number),
+          census_accounts:
+            Number(countResult?.count || 0)
         });
       } catch (error) {
         return errorResponse(error);
       }
     }
 
-    // ---------------------------------------------------------
-    // MANUAL SCAN
-    //
-    // Examples:
+    // ========================================================
+    // MANUAL INDEXER
     //
     // /api/indexer/scan
     //
-    // /api/indexer/scan?blocks=5000
+    // lub:
     //
-    // First run:
-    // scans backwards from current head.
-    //
-    // Later runs:
-    // continues from last_scanned_block + 1.
-    // ---------------------------------------------------------
+    // /api/indexer/scan?blocks=200
+    // ========================================================
 
     if (url.pathname === "/api/indexer/scan") {
       try {
         let requestedBlocks = Number(
-          url.searchParams.get("blocks") || DEFAULT_SCAN_BLOCKS
+          url.searchParams.get("blocks") ||
+            DEFAULT_SCAN_BLOCKS
         );
 
         if (
@@ -123,15 +129,28 @@ export default {
           MAX_SCAN_BLOCKS
         );
 
+        // Do indeksowania używamy LIB zamiast head block.
+        // Dzięki temu przetwarzamy bloki nieodwracalne.
         const props = await hiveRpc(
           "condenser_api.get_dynamic_global_properties",
           []
         );
 
-        const headBlock = Number(props.head_block_number);
+        const headBlock = Number(
+          props.head_block_number
+        );
 
-        if (!Number.isInteger(headBlock) || headBlock <= 0) {
-          throw new Error("Hive RPC returned invalid head block.");
+        const irreversibleBlock = Number(
+          props.last_irreversible_block_num
+        );
+
+        if (
+          !Number.isInteger(irreversibleBlock) ||
+          irreversibleBlock <= 0
+        ) {
+          throw new Error(
+            "Hive RPC returned invalid last irreversible block."
+          );
         }
 
         const storedLastBlock = await getMeta(
@@ -142,30 +161,43 @@ export default {
         let startBlock;
 
         if (storedLastBlock !== null) {
-          startBlock = Number(storedLastBlock) + 1;
-
-          if (startBlock > headBlock) {
-            return json({
-              ok: true,
-              message: "Indexer is already caught up.",
-              head_block_number: headBlock,
-              last_scanned_block: Number(storedLastBlock),
-              blocks_scanned: 0,
-              census_operations: 0,
-              set_operations: 0,
-              unset_operations: 0
-            });
-          }
+          startBlock =
+            Number(storedLastBlock) + 1;
         } else {
           startBlock = Math.max(
             1,
-            headBlock - requestedBlocks + 1
+            irreversibleBlock -
+              requestedBlocks +
+              1
           );
         }
 
+        if (startBlock > irreversibleBlock) {
+          return json({
+            ok: true,
+            message:
+              "Indexer is already caught up to the last irreversible block.",
+            head_block_number: headBlock,
+            last_irreversible_block_num:
+              irreversibleBlock,
+            last_scanned_block:
+              storedLastBlock === null
+                ? null
+                : Number(storedLastBlock),
+            blocks_scanned: 0,
+            census_operations: 0,
+            valid_census_operations: 0,
+            invalid_census_operations: 0,
+            set_operations: 0,
+            unset_operations: 0
+          });
+        }
+
         const endBlock = Math.min(
-          headBlock,
-          startBlock + requestedBlocks - 1
+          irreversibleBlock,
+          startBlock +
+            requestedBlocks -
+            1
         );
 
         const stats = {
@@ -186,20 +218,24 @@ export default {
         ) {
           const count = Math.min(
             BLOCK_BATCH_SIZE,
-            endBlock - batchStart + 1
+            endBlock -
+              batchStart +
+              1
           );
 
           const response = await hiveRpc(
             "block_api.get_block_range",
             {
-              starting_block_num: batchStart,
+              starting_block_num:
+                batchStart,
               count
             }
           );
 
-          const blocks = Array.isArray(response?.blocks)
-            ? response.blocks
-            : [];
+          const blocks =
+            Array.isArray(response?.blocks)
+              ? response.blocks
+              : [];
 
           if (blocks.length === 0) {
             throw new Error(
@@ -207,9 +243,14 @@ export default {
             );
           }
 
-          for (let i = 0; i < blocks.length; i++) {
+          for (
+            let i = 0;
+            i < blocks.length;
+            i++
+          ) {
             const block = blocks[i];
-            const blockNum = batchStart + i;
+            const blockNum =
+              batchStart + i;
 
             await processBlock(
               env.DB,
@@ -222,7 +263,9 @@ export default {
           }
 
           const actualLastBlock =
-            batchStart + blocks.length - 1;
+            batchStart +
+            blocks.length -
+            1;
 
           await setMeta(
             env.DB,
@@ -231,29 +274,34 @@ export default {
           );
         }
 
-        const countResult = await env.DB.prepare(`
-          SELECT COUNT(*) AS count
-          FROM census_current
-        `).first();
+        const countResult =
+          await env.DB.prepare(`
+            SELECT COUNT(*) AS count
+            FROM census_current
+          `).first();
 
         return json({
           ok: true,
           start_block: startBlock,
           end_block: endBlock,
-          head_block_number: headBlock,
+          head_block_number:
+            headBlock,
+          last_irreversible_block_num:
+            irreversibleBlock,
           ...stats,
-          active_census_accounts: Number(
-            countResult?.count || 0
-          )
+          active_census_accounts:
+            Number(
+              countResult?.count || 0
+            )
         });
       } catch (error) {
         return errorResponse(error);
       }
     }
 
-    // ---------------------------------------------------------
+    // ========================================================
     // STATIC WEBSITE
-    // ---------------------------------------------------------
+    // ========================================================
 
     return env.ASSETS.fetch(request);
   }
@@ -263,41 +311,55 @@ export default {
 // BLOCK PROCESSING
 // ============================================================
 
-async function processBlock(db, block, blockNum, stats) {
-  const transactions = Array.isArray(block?.transactions)
-    ? block.transactions
-    : [];
+async function processBlock(
+  db,
+  block,
+  blockNum,
+  stats
+) {
+  const transactions =
+    Array.isArray(block?.transactions)
+      ? block.transactions
+      : [];
 
-  const transactionIds = Array.isArray(block?.transaction_ids)
-    ? block.transaction_ids
-    : [];
+  const transactionIds =
+    Array.isArray(block?.transaction_ids)
+      ? block.transaction_ids
+      : [];
 
   for (
     let txIndex = 0;
     txIndex < transactions.length;
     txIndex++
   ) {
-    const tx = transactions[txIndex];
+    const tx =
+      transactions[txIndex];
 
     stats.transactions_scanned++;
 
-    const operations = Array.isArray(tx?.operations)
-      ? tx.operations
-      : [];
+    const operations =
+      Array.isArray(tx?.operations)
+        ? tx.operations
+        : [];
 
     const trxId =
-      transactionIds[txIndex] || null;
+      transactionIds[txIndex] ||
+      null;
 
     for (
       let opIndex = 0;
       opIndex < operations.length;
       opIndex++
     ) {
-      const operation = operations[opIndex];
+      const operation =
+        operations[opIndex];
 
       stats.operations_scanned++;
 
-      const parsed = parseCustomJsonOperation(operation);
+      const parsed =
+        parseCustomJsonOperation(
+          operation
+        );
 
       if (!parsed) {
         continue;
@@ -309,7 +371,8 @@ async function processBlock(db, block, blockNum, stats) {
 
       stats.census_operations++;
 
-      const account = getPostingAccount(parsed);
+      const account =
+        getPostingAccount(parsed);
 
       if (!account) {
         stats.invalid_census_operations++;
@@ -320,7 +383,8 @@ async function processBlock(db, block, blockNum, stats) {
 
       try {
         payload =
-          typeof parsed.json === "string"
+          typeof parsed.json ===
+          "string"
             ? JSON.parse(parsed.json)
             : parsed.json;
       } catch {
@@ -328,13 +392,25 @@ async function processBlock(db, block, blockNum, stats) {
         continue;
       }
 
-      if (!payload || payload.v !== PROTOCOL_VERSION) {
+      if (
+        !payload ||
+        payload.v !==
+          PROTOCOL_VERSION
+      ) {
         stats.invalid_census_operations++;
         continue;
       }
 
+      // ------------------------------------------------------
+      // SET
+      // ------------------------------------------------------
+
       if (payload.action === "set") {
-        if (!isValidSetPayload(payload)) {
+        if (
+          !isValidSetPayload(
+            payload
+          )
+        ) {
           stats.invalid_census_operations++;
           continue;
         }
@@ -353,7 +429,20 @@ async function processBlock(db, block, blockNum, stats) {
         continue;
       }
 
+      // ------------------------------------------------------
+      // UNSET
+      // ------------------------------------------------------
+
       if (payload.action === "unset") {
+        if (
+          !isValidUnsetPayload(
+            payload
+          )
+        ) {
+          stats.invalid_census_operations++;
+          continue;
+        }
+
         await applyUnset(
           db,
           account,
@@ -375,32 +464,89 @@ async function processBlock(db, block, blockNum, stats) {
 // HIVE OPERATION PARSING
 // ============================================================
 
-function parseCustomJsonOperation(operation) {
-  if (!Array.isArray(operation) || operation.length !== 2) {
+function parseCustomJsonOperation(
+  operation
+) {
+  // ---------------------------------------------------------
+  // Legacy / condenser format:
+  //
+  // [
+  //   "custom_json",
+  //   {
+  //     "required_auths": [],
+  //     "required_posting_auths": ["account"],
+  //     "id": "hive_census",
+  //     "json": "..."
+  //   }
+  // ]
+  // ---------------------------------------------------------
+
+  if (
+    Array.isArray(operation) &&
+    operation.length === 2
+  ) {
+    const [type, value] =
+      operation;
+
+    if (
+      (
+        type === "custom_json" ||
+        type ===
+          "custom_json_operation"
+      ) &&
+      value &&
+      typeof value === "object"
+    ) {
+      return value;
+    }
+
     return null;
   }
 
-  const [type, value] = operation;
+  // ---------------------------------------------------------
+  // AppBase format:
+  //
+  // {
+  //   "type": "custom_json_operation",
+  //   "value": {
+  //     ...
+  //   }
+  // }
+  // ---------------------------------------------------------
 
-  if (type !== "custom_json") {
-    return null;
+  if (
+    operation &&
+    typeof operation === "object" &&
+    (
+      operation.type ===
+        "custom_json_operation" ||
+      operation.type ===
+        "custom_json"
+    ) &&
+    operation.value &&
+    typeof operation.value ===
+      "object"
+  ) {
+    return operation.value;
   }
 
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  return value;
+  return null;
 }
 
+// ============================================================
+// SIGNER
+// ============================================================
+
 function getPostingAccount(operation) {
-  const posting = operation.required_posting_auths;
+  const posting =
+    operation.required_posting_auths;
 
   if (!Array.isArray(posting)) {
     return null;
   }
 
-  // Hive Census v1 expects exactly one posting signer.
+  // Hive Census v1:
+  // jedna deklaracja = jedno konto.
   if (posting.length !== 1) {
     return null;
   }
@@ -409,37 +555,41 @@ function getPostingAccount(operation) {
 
   if (
     typeof account !== "string" ||
-    account.length === 0
+    account.trim() === ""
   ) {
     return null;
   }
 
-  return account;
+  return account.trim();
 }
 
 // ============================================================
-// PROTOCOL v1 VALIDATION
+// PROTOCOL v1 — SET VALIDATION
 // ============================================================
 
 function isValidSetPayload(payload) {
-  if (payload.v !== 1) {
-    return false;
-  }
-
-  if (payload.action !== "set") {
-    return false;
-  }
-
   if (
-    typeof payload.country !== "string" ||
-    !/^[A-Z]{2}$/.test(payload.country)
+    payload.v !== 1 ||
+    payload.action !== "set"
   ) {
     return false;
   }
 
   if (
-    typeof payload.country_name !== "string" ||
-    payload.country_name.trim() === ""
+    typeof payload.country !==
+      "string" ||
+    !/^[A-Z]{2}$/.test(
+      payload.country
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    typeof payload.country_name !==
+      "string" ||
+    payload.country_name.trim() ===
+      ""
   ) {
     return false;
   }
@@ -447,28 +597,33 @@ function isValidSetPayload(payload) {
   if (
     payload.region !== null &&
     payload.region !== undefined &&
-    typeof payload.region !== "string"
+    typeof payload.region !==
+      "string"
   ) {
     return false;
   }
 
   if (
     payload.region_name !== null &&
-    payload.region_name !== undefined &&
-    typeof payload.region_name !== "string"
+    payload.region_name !==
+      undefined &&
+    typeof payload.region_name !==
+      "string"
   ) {
     return false;
   }
 
   if (
-    typeof payload.city !== "string" ||
+    typeof payload.city !==
+      "string" ||
     payload.city.trim() === ""
   ) {
     return false;
   }
 
   if (
-    typeof payload.lat !== "number" ||
+    typeof payload.lat !==
+      "number" ||
     !Number.isFinite(payload.lat) ||
     payload.lat < -90 ||
     payload.lat > 90
@@ -477,7 +632,8 @@ function isValidSetPayload(payload) {
   }
 
   if (
-    typeof payload.lon !== "number" ||
+    typeof payload.lon !==
+      "number" ||
     !Number.isFinite(payload.lon) ||
     payload.lon < -180 ||
     payload.lon > 180
@@ -489,7 +645,19 @@ function isValidSetPayload(payload) {
 }
 
 // ============================================================
-// DATABASE
+// PROTOCOL v1 — UNSET VALIDATION
+// ============================================================
+
+function isValidUnsetPayload(payload) {
+  return (
+    payload &&
+    payload.v === 1 &&
+    payload.action === "unset"
+  );
+}
+
+// ============================================================
+// DATABASE — SET
 // ============================================================
 
 async function applySet(
@@ -513,21 +681,37 @@ async function applySet(
       trx_id,
       updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    VALUES (
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+      CURRENT_TIMESTAMP
+    )
 
-    ON CONFLICT(account) DO UPDATE SET
-      country = excluded.country,
-      country_name = excluded.country_name,
-      region = excluded.region,
-      region_name = excluded.region_name,
-      city = excluded.city,
-      lat = excluded.lat,
-      lon = excluded.lon,
-      block_num = excluded.block_num,
-      trx_id = excluded.trx_id,
-      updated_at = CURRENT_TIMESTAMP
+    ON CONFLICT(account)
+    DO UPDATE SET
+      country =
+        excluded.country,
+      country_name =
+        excluded.country_name,
+      region =
+        excluded.region,
+      region_name =
+        excluded.region_name,
+      city =
+        excluded.city,
+      lat =
+        excluded.lat,
+      lon =
+        excluded.lon,
+      block_num =
+        excluded.block_num,
+      trx_id =
+        excluded.trx_id,
+      updated_at =
+        CURRENT_TIMESTAMP
 
-    WHERE excluded.block_num >= census_current.block_num
+    WHERE
+      excluded.block_num >=
+      census_current.block_num
   `)
     .bind(
       account,
@@ -544,6 +728,10 @@ async function applySet(
     .run();
 }
 
+// ============================================================
+// DATABASE — UNSET
+// ============================================================
+
 async function applyUnset(
   db,
   account,
@@ -554,31 +742,53 @@ async function applyUnset(
     WHERE account = ?
       AND block_num <= ?
   `)
-    .bind(account, blockNum)
+    .bind(
+      account,
+      blockNum
+    )
     .run();
 }
 
-async function getMeta(db, key) {
-  const row = await db.prepare(`
-    SELECT value
-    FROM census_meta
-    WHERE key = ?
-  `)
-    .bind(key)
-    .first();
+// ============================================================
+// DATABASE — META
+// ============================================================
 
-  return row ? row.value : null;
+async function getMeta(db, key) {
+  const row =
+    await db.prepare(`
+      SELECT value
+      FROM census_meta
+      WHERE key = ?
+    `)
+      .bind(key)
+      .first();
+
+  return row
+    ? row.value
+    : null;
 }
 
-async function setMeta(db, key, value) {
+async function setMeta(
+  db,
+  key,
+  value
+) {
   await db.prepare(`
-    INSERT INTO census_meta (key, value)
+    INSERT INTO census_meta (
+      key,
+      value
+    )
     VALUES (?, ?)
 
-    ON CONFLICT(key) DO UPDATE SET
-      value = excluded.value
+    ON CONFLICT(key)
+    DO UPDATE SET
+      value =
+        excluded.value
   `)
-    .bind(key, value)
+    .bind(
+      key,
+      value
+    )
     .run();
 }
 
@@ -586,19 +796,26 @@ async function setMeta(db, key, value) {
 // HIVE RPC
 // ============================================================
 
-async function hiveRpc(method, params) {
-  const response = await fetch(HIVE_RPC, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      method,
-      params,
-      id: 1
-    })
-  });
+async function hiveRpc(
+  method,
+  params
+) {
+  const response = await fetch(
+    HIVE_RPC,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type":
+          "application/json"
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method,
+        params,
+        id: 1
+      })
+    }
+  );
 
   if (!response.ok) {
     throw new Error(
@@ -606,15 +823,20 @@ async function hiveRpc(method, params) {
     );
   }
 
-  const data = await response.json();
+  const data =
+    await response.json();
 
   if (data.error) {
     throw new Error(
-      `Hive RPC error: ${JSON.stringify(data.error)}`
+      `Hive RPC error: ${JSON.stringify(
+        data.error
+      )}`
     );
   }
 
-  if (data.result === undefined) {
+  if (
+    data.result === undefined
+  ) {
     throw new Error(
       `Hive RPC returned no result for ${method}.`
     );
@@ -627,15 +849,23 @@ async function hiveRpc(method, params) {
 // HTTP HELPERS
 // ============================================================
 
-function json(data, status = 200) {
+function json(
+  data,
+  status = 200
+) {
   return new Response(
-    JSON.stringify(data, null, 2),
+    JSON.stringify(
+      data,
+      null,
+      2
+    ),
     {
       status,
       headers: {
         "Content-Type":
           "application/json; charset=utf-8",
-        "Cache-Control": "no-store"
+        "Cache-Control":
+          "no-store"
       }
     }
   );
