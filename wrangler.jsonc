@@ -3,8 +3,17 @@
   "name": "hive-census",
   "main": "src/worker.js",
   "compatibility_date": "2026-09-26",
+
   "assets": {
     "directory": "./public",
     "binding": "ASSETS"
-  }
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "hive-census-db",
+      "database_id": "ff020506-4993-4adb-a29f-08c26f444d76"
+    }
+  ]
 }
