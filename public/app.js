@@ -8,7 +8,7 @@ let searchController = null;
 let lastSearch = "";
 let publishing = false;
 
-const CENSUS_VERSION = "0.6.0";
+const CENSUS_VERSION = "0.6.1";
 const PROTOCOL_VERSION = 1;
 const CUSTOM_JSON_ID = "hive_census";
 const CENSUS_API = "/api/census";
@@ -1538,13 +1538,6 @@ $("publishBtn").onclick =
               "It will appear on the map after the Census indexer processes the new Hive block."
             );
 
-            /*
-             * The global map is derived from the D1 index.
-             * The scheduled indexer may need a few minutes
-             * to process the new irreversible Hive block.
-             *
-             * This refresh is opportunistic only.
-             */
             setTimeout(
               loadCensusMap,
               10000
@@ -1621,16 +1614,12 @@ $("publishBtn").onclick =
  * GLOBAL HIVE CENSUS READER
  * ============================================================
  *
- * v0.6.0
+ * v0.6.1
  *
- * The frontend no longer knows which Hive accounts
- * participate in Census.
+ * Current active state is loaded from /api/census.
  *
- * It reads the current active Census state from:
- *
- *     GET /api/census
- *
- * The API is backed by the derived D1 index.
+ * Multiple Hive accounts declaring the same locality
+ * are represented by one locality marker.
  *
  * Hive remains the source of truth.
  */
@@ -1656,10 +1645,6 @@ function clearCensusMarkers() {
 
 /*
  * VALIDATE API RECORD
- *
- * This is defensive frontend validation.
- * Protocol validation is performed by the indexer
- * before records enter census_current.
  */
 
 function validCensusApiRecord(
@@ -1729,43 +1714,177 @@ function validCensusApiRecord(
 
 
 /*
- * CREATE CENSUS MARKER
+ * GROUP RECORDS BY LOCALITY
+ *
+ * Protocol coordinates represent the locality,
+ * not the user's precise position.
+ *
+ * We therefore group records using the normalized
+ * Census locality identity rather than moving markers
+ * away from their blockchain-declared coordinates.
  */
 
-function addCensusMarker(
+function censusLocalityKey(
   record
 ) {
+  return [
+    record.country,
+    record.region || "",
+    normalizeText(
+      record.city
+    ),
+    Number(record.lat).toFixed(4),
+    Number(record.lon).toFixed(4)
+  ].join("|");
+}
+
+
+function groupCensusByLocality(
+  records
+) {
+  const groups =
+    new Map();
+
+  for (
+    const record
+    of records
+  ) {
+    const key =
+      censusLocalityKey(
+        record
+      );
+
+    if (
+      !groups.has(key)
+    ) {
+      groups.set(
+        key,
+        {
+          city:
+            record.city,
+
+          region:
+            record.region || null,
+
+          region_name:
+            record.region_name || null,
+
+          country:
+            record.country,
+
+          country_name:
+            record.country_name,
+
+          lat:
+            record.lat,
+
+          lon:
+            record.lon,
+
+          accounts:
+            []
+        }
+      );
+    }
+
+    groups
+      .get(key)
+      .accounts
+      .push(
+        record.account
+      );
+  }
+
+  const result =
+    [...groups.values()];
+
+  for (
+    const group
+    of result
+  ) {
+    group.accounts.sort(
+      (a, b) =>
+        a.localeCompare(
+          b,
+          undefined,
+          {
+            sensitivity:
+              "base"
+          }
+        )
+    );
+  }
+
+  return result;
+}
+
+
+/*
+ * CREATE LOCALITY MARKER
+ */
+
+function addCensusLocalityMarker(
+  locality
+) {
   if (
-    !validCensusApiRecord(
-      record
-    )
+    !locality ||
+    !Number.isFinite(
+      locality.lat
+    ) ||
+    !Number.isFinite(
+      locality.lon
+    ) ||
+    !Array.isArray(
+      locality.accounts
+    ) ||
+    locality.accounts.length === 0
   ) {
     return null;
   }
 
   const locationParts = [
-    record.city,
-    record.region_name,
-    record.country_name
+    locality.city,
+    locality.region_name,
+    locality.country_name
   ].filter(Boolean);
 
+  const userCount =
+    locality.accounts.length;
+
+  const userLabel =
+    userCount === 1
+      ? "1 Hive user"
+      : `${userCount} Hive users`;
+
+  const accountsHtml =
+    locality.accounts
+      .map(
+        account =>
+          `@${escapeHtml(
+            account
+          )}`
+      )
+      .join("<br>");
+
   const popup =
-    `<strong>@${escapeHtml(
-      record.account
+    `<strong>${escapeHtml(
+      locationParts.join(", ")
     )}</strong>` +
     `<br>` +
-    `${escapeHtml(
-      locationParts.join(", ")
-    )}` +
-    `<br>` +
-    `<span style="opacity:.7;font-size:.85em">` +
+    `<span style="opacity:.75">` +
+    `${userLabel}` +
+    `</span>` +
+    `<div style="margin-top:8px">` +
+    `${accountsHtml}` +
+    `</div>` +
+    `<div style="margin-top:8px;opacity:.7;font-size:.85em">` +
     `Hive Census · protocol v${PROTOCOL_VERSION}` +
-    `</span>`;
+    `</div>`;
 
   const marker =
     L.marker([
-      record.lat,
-      record.lon
+      locality.lat,
+      locality.lon
     ])
       .addTo(map)
       .bindPopup(
@@ -1828,78 +1947,80 @@ async function loadCensusMap() {
       );
     }
 
+    const activeRecords =
+      data.census.filter(
+        record => {
+          const valid =
+            validCensusApiRecord(
+              record
+            );
+
+          if (!valid) {
+            console.warn(
+              "Hive Census: invalid API record ignored:",
+              record
+            );
+          }
+
+          return valid;
+        }
+      );
+
+    const localities =
+      groupCensusByLocality(
+        activeRecords
+      );
+
     /*
-     * Only replace existing markers after
-     * a valid API response has been received.
-     *
-     * This prevents a temporary API failure
-     * from unnecessarily clearing the map.
+     * Only replace markers after receiving
+     * and validating the API response.
      */
     clearCensusMarkers();
 
-    const activeRecords = [];
-
     for (
-      const record
-      of data.census
+      const locality
+      of localities
     ) {
-      if (
-        !validCensusApiRecord(
-          record
-        )
-      ) {
-        console.warn(
-          "Hive Census: invalid API record ignored:",
-          record
-        );
-
-        continue;
-      }
-
-      activeRecords.push(
-        record
-      );
-
-      addCensusMarker(
-        record
+      addCensusLocalityMarker(
+        locality
       );
     }
 
     /*
-     * One declaration:
+     * One locality:
      * show its region.
      *
-     * Multiple declarations:
-     * fit all markers.
+     * Multiple localities:
+     * fit all locality markers.
      *
-     * Zero declarations:
-     * retain the default world view.
+     * Zero localities:
+     * retain the current map view.
      */
 
     if (
-      activeRecords.length === 1
+      localities.length === 1
     ) {
-      const record =
-        activeRecords[0];
+      const locality =
+        localities[0];
 
       map.setView(
         [
-          record.lat,
-          record.lon
+          locality.lat,
+          locality.lon
         ],
         7
       );
     }
 
     else if (
-      activeRecords.length > 1
+      localities.length > 1
     ) {
       const bounds =
         L.latLngBounds(
-          activeRecords.map(
-            record => [
-              record.lat,
-              record.lon
+          localities.map(
+            locality => [
+              locality.lat,
+              locality.lon
             ]
           )
         );
@@ -1917,10 +2038,16 @@ async function loadCensusMap() {
     }
 
     console.log(
-      `Hive Census: ${activeRecords.length} active Census declaration(s) loaded from global index.`
+      `Hive Census: ${activeRecords.length} active declaration(s) ` +
+      `in ${localities.length} locality/localities loaded.`
     );
 
-    return activeRecords;
+    return {
+      records:
+        activeRecords,
+
+      localities
+    };
 
   } catch (error) {
     console.error(
@@ -1928,7 +2055,13 @@ async function loadCensusMap() {
       error
     );
 
-    return [];
+    return {
+      records:
+        [],
+
+      localities:
+        []
+    };
   }
 }
 
