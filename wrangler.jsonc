@@ -15,5 +15,11 @@
       "database_name": "hive-census-db",
       "database_id": "ff020506-4993-4adb-a29f-08c26f444d76"
     }
-  ]
+  ],
+
+  "triggers": {
+    "crons": [
+      "*/5 * * * *"
+    ]
+  }
 }
