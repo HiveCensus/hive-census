@@ -7,12 +7,7 @@ let searchController = null;
 let lastSearch = "";
 let publishing = false;
 
-
-/*
- * CONFIG
- */
-
-const CENSUS_VERSION = "0.4.0";
+const CENSUS_VERSION = "0.4.1";
 const PROTOCOL_VERSION = 1;
 const CUSTOM_JSON_ID = "hive_census";
 
@@ -22,8 +17,12 @@ const CUSTOM_JSON_ID = "hive_census";
  */
 
 function setStatus(msg, bad = false) {
-  $("status").textContent = msg;
-  $("status").style.color = bad ? "#ff7288" : "#9da8b4";
+  const status = $("status");
+
+  if (!status) return;
+
+  status.textContent = msg;
+  status.style.color = bad ? "#ff7288" : "#9da8b4";
 }
 
 
@@ -31,45 +30,198 @@ function setStatus(msg, bad = false) {
  * KEYCHAIN
  */
 
-function keychain() {
+function getKeychainProvider() {
   /*
-   * Hive Keychain traditionally exposes window.hive_keychain.
-   * Some compatible implementations expose window.hive.
+   * Prefer the traditional Hive Keychain API.
    */
-  return window.hive_keychain || window.hive || null;
+  if (
+    window.hive_keychain &&
+    typeof window.hive_keychain === "object"
+  ) {
+    return {
+      provider: window.hive_keychain,
+      name: "window.hive_keychain"
+    };
+  }
+
+  /*
+   * Some newer/compatible environments may expose
+   * a signing API through window.hive.
+   *
+   * We accept it only if it actually exposes at least
+   * one Keychain-style method.
+   */
+  if (
+    window.hive &&
+    typeof window.hive === "object" &&
+    (
+      typeof window.hive.requestHandshake === "function" ||
+      typeof window.hive.requestCustomJson === "function"
+    )
+  ) {
+    return {
+      provider: window.hive,
+      name: "window.hive"
+    };
+  }
+
+  return null;
 }
 
+
+function keychain() {
+  const detected = getKeychainProvider();
+
+  return detected
+    ? detected.provider
+    : null;
+}
+
+
+/*
+ * DIAGNOSTIC KEYCHAIN CHECK
+ */
 
 function checkKeychain() {
-  const kc = keychain();
+  setStatus("Checking Hive Keychain…");
 
-  if (!kc) {
+  const hasHiveKeychain =
+    !!window.hive_keychain;
+
+  const hasHive =
+    !!window.hive;
+
+  const detected =
+    getKeychainProvider();
+
+  if (!detected) {
     setStatus(
-      "Hive Keychain was not detected in this browser.",
+      "Keychain diagnostic: " +
+      `window.hive_keychain=${hasHiveKeychain ? "YES" : "NO"} · ` +
+      `window.hive=${hasHive ? "YES" : "NO"} · ` +
+      "No compatible Keychain API detected.",
       true
     );
+
     return;
   }
 
-  if (typeof kc.requestHandshake !== "function") {
-    setStatus(
-      "A compatible Hive signing API was detected, but Keychain handshake is unavailable.",
-      true
-    );
+  const kc =
+    detected.provider;
+
+  const hasHandshake =
+    typeof kc.requestHandshake === "function";
+
+  const hasCustomJson =
+    typeof kc.requestCustomJson === "function";
+
+  /*
+   * First show what the browser exposes.
+   * This happens BEFORE attempting a handshake,
+   * so the button can no longer appear to do nothing.
+   */
+
+  setStatus(
+    "Keychain API detected: " +
+    `${detected.name} · ` +
+    `Handshake=${hasHandshake ? "YES" : "NO"} · ` +
+    `Custom JSON=${hasCustomJson ? "YES" : "NO"}`
+  );
+
+  /*
+   * A working requestCustomJson is the capability
+   * Census ultimately needs.
+   */
+
+  if (!hasHandshake) {
+    if (hasCustomJson) {
+      setStatus(
+        "Keychain API detected. " +
+        `${detected.name} · ` +
+        "Handshake=NO · Custom JSON=YES. " +
+        "The browser exposes the function required by Hive Census."
+      );
+    } else {
+      setStatus(
+        "Keychain API detected, but requestHandshake and requestCustomJson are unavailable.",
+        true
+      );
+    }
+
     return;
   }
 
-  kc.requestHandshake(() => {
-    setStatus("Hive Keychain detected.");
-  });
+  /*
+   * Attempt handshake as an additional diagnostic.
+   *
+   * If mobile Keychain does not call the callback,
+   * the previous diagnostic remains useful.
+   */
+
+  let callbackReceived = false;
+
+  try {
+    kc.requestHandshake(() => {
+      callbackReceived = true;
+
+      setStatus(
+        "Hive Keychain handshake successful. " +
+        `${detected.name} · ` +
+        `Custom JSON=${hasCustomJson ? "YES" : "NO"}`
+      );
+    });
+
+    /*
+     * Give the mobile browser a moment to respond.
+     * If no callback arrives, report that fact instead
+     * of leaving the user with no feedback.
+     */
+
+    setTimeout(() => {
+      if (!callbackReceived) {
+        setStatus(
+          "Keychain API detected, but no handshake callback was received. " +
+          `${detected.name} · ` +
+          `Custom JSON=${hasCustomJson ? "YES" : "NO"}. ` +
+          "This may be normal for this mobile Keychain environment."
+        );
+      }
+    }, 2000);
+
+  } catch (error) {
+    console.error(
+      "Hive Census Keychain handshake error:",
+      error
+    );
+
+    setStatus(
+      "Keychain API detected, but handshake produced an error: " +
+      (
+        error && error.message
+          ? error.message
+          : String(error)
+      ) +
+      `. Custom JSON=${hasCustomJson ? "YES" : "NO"}.`,
+      true
+    );
+  }
 }
 
 
-$("handshakeBtn").onclick = checkKeychain;
+$("handshakeBtn").onclick =
+  checkKeychain;
+
 
 $("connectBtn").onclick = () => {
   location.hash = "join";
-  checkKeychain();
+
+  /*
+   * Give scrolling a moment to finish.
+   */
+  setTimeout(
+    checkKeychain,
+    100
+  );
 };
 
 
@@ -88,34 +240,42 @@ function getAccount() {
 
 function validHiveAccountName(account) {
   /*
-   * Conservative client-side validation.
-   * Blockchain/Keychain remains authoritative.
+   * Conservative local check only.
+   * Hive/Keychain remains authoritative.
    */
-  return /^[a-z][a-z0-9.-]{2,15}$/.test(account);
+
+  return /^[a-z][a-z0-9.-]{2,15}$/.test(
+    account
+  );
 }
 
 
-$("account").addEventListener("input", () => {
-  updatePublishButton();
-});
+$("account").addEventListener(
+  "input",
+  updatePublishButton
+);
 
 
 /*
  * PERMANENCE ACKNOWLEDGEMENT
  */
 
-$("permanentAck").addEventListener("change", () => {
-  updatePublishButton();
-});
+$("permanentAck").addEventListener(
+  "change",
+  updatePublishButton
+);
 
 
 /*
- * PUBLISH BUTTON STATE
+ * PUBLISH BUTTON
  */
 
 function updatePublishButton() {
-  const account = getAccount();
-  const acknowledged = $("permanentAck").checked;
+  const account =
+    getAccount();
+
+  const acknowledged =
+    $("permanentAck").checked;
 
   const ready =
     !publishing &&
@@ -123,13 +283,20 @@ function updatePublishButton() {
     validHiveAccountName(account) &&
     acknowledged;
 
-  $("publishBtn").disabled = !ready;
+  $("publishBtn").disabled =
+    !ready;
 
   if (publishing) {
-    $("publishBtn").textContent = "Waiting for Keychain…";
-  } else if (ready) {
-    $("publishBtn").textContent = "Publish to Hive";
-  } else {
+    $("publishBtn").textContent =
+      "Waiting for Keychain…";
+  }
+
+  else if (ready) {
+    $("publishBtn").textContent =
+      "Publish to Hive";
+  }
+
+  else {
     $("publishBtn").textContent =
       "Complete the steps above to publish";
   }
@@ -137,44 +304,59 @@ function updatePublishButton() {
 
 
 /*
- * LIVE LOCATION SEARCH
+ * LIVE SEARCH
  */
 
-$("placeQuery").addEventListener("input", () => {
-  const q = $("placeQuery").value.trim();
+$("placeQuery").addEventListener(
+  "input",
+  () => {
+    const q =
+      $("placeQuery").value.trim();
 
-  clearTimeout(searchTimer);
-  clearSelection();
+    clearTimeout(
+      searchTimer
+    );
 
-  if (q.length < 3) {
-    $("results").innerHTML = "";
-    return;
+    clearSelection();
+
+    if (q.length < 3) {
+      $("results").innerHTML = "";
+      return;
+    }
+
+    $("results").innerHTML =
+      '<div class="muted">Searching…</div>';
+
+    searchTimer =
+      setTimeout(
+        () => searchPlaces(q),
+        500
+      );
   }
-
-  $("results").innerHTML =
-    '<div class="muted">Searching…</div>';
-
-  searchTimer = setTimeout(() => {
-    searchPlaces(q);
-  }, 500);
-});
+);
 
 
-$("placeQuery").addEventListener("keydown", e => {
-  if (e.key !== "Enter") {
-    return;
+$("placeQuery").addEventListener(
+  "keydown",
+  e => {
+    if (e.key !== "Enter") {
+      return;
+    }
+
+    e.preventDefault();
+
+    clearTimeout(
+      searchTimer
+    );
+
+    const q =
+      $("placeQuery").value.trim();
+
+    if (q.length >= 3) {
+      searchPlaces(q);
+    }
   }
-
-  e.preventDefault();
-
-  clearTimeout(searchTimer);
-
-  const q = $("placeQuery").value.trim();
-
-  if (q.length >= 3) {
-    searchPlaces(q);
-  }
-});
+);
 
 
 /*
@@ -182,7 +364,8 @@ $("placeQuery").addEventListener("keydown", e => {
  */
 
 async function searchPlaces(query) {
-  const q = query.trim();
+  const q =
+    query.trim();
 
   if (q.length < 3) {
     return;
@@ -194,7 +377,8 @@ async function searchPlaces(query) {
     searchController.abort();
   }
 
-  searchController = new AbortController();
+  searchController =
+    new AbortController();
 
   $("results").innerHTML =
     '<div class="muted">Searching…</div>';
@@ -210,45 +394,81 @@ async function searchPlaces(query) {
       "&q=" +
       encodeURIComponent(q);
 
-    const res = await fetch(url, {
-      headers: {
-        "Accept-Language": "en"
-      },
-      signal: searchController.signal
-    });
+    const res =
+      await fetch(
+        url,
+        {
+          headers: {
+            "Accept-Language": "en"
+          },
+          signal:
+            searchController.signal
+        }
+      );
 
     if (!res.ok) {
-      throw new Error("Geocoding request failed");
+      throw new Error(
+        "Geocoding request failed"
+      );
     }
 
-    const data = await res.json();
+    const data =
+      await res.json();
 
     if (lastSearch !== q) {
       return;
     }
 
-    let places = data
-      .map(p => normalizePlace(p, q))
-      .filter(place => place !== null);
+    let places =
+      data
+        .map(
+          p =>
+            normalizePlace(
+              p,
+              q
+            )
+        )
+        .filter(
+          place =>
+            place !== null
+        );
 
-    places = deduplicatePlaces(places);
-
-    places.sort((a, b) => {
-      if (b.score !== a.score) {
-        return b.score - a.score;
-      }
-
-      return a.displayLabel.localeCompare(
-        b.displayLabel,
-        undefined,
-        { sensitivity: "base" }
+    places =
+      deduplicatePlaces(
+        places
       );
-    });
 
-    renderResults(places);
+    places.sort(
+      (a, b) => {
+        if (
+          b.score !== a.score
+        ) {
+          return (
+            b.score -
+            a.score
+          );
+        }
+
+        return a.displayLabel.localeCompare(
+          b.displayLabel,
+          undefined,
+          {
+            sensitivity:
+              "base"
+          }
+        );
+      }
+    );
+
+    renderResults(
+      places
+    );
 
   } catch (e) {
-    if (e.name === "AbortError") {
+    if (
+      e.name ===
+      "AbortError"
+    ) {
       return;
     }
 
@@ -261,11 +481,15 @@ async function searchPlaces(query) {
 
 
 /*
- * NORMALIZE NOMINATIM RESULT
+ * NORMALIZE PLACE
  */
 
-function normalizePlace(p, query) {
-  const a = p.address || {};
+function normalizePlace(
+  p,
+  query
+) {
+  const a =
+    p.address || {};
 
   const city =
     a.city ||
@@ -276,14 +500,19 @@ function normalizePlace(p, query) {
     null;
 
   const countryName =
-    a.country || null;
+    a.country ||
+    null;
 
   const countryCode =
     a.country_code
       ? a.country_code.toUpperCase()
       : null;
 
-  if (!city || !countryName || !countryCode) {
+  if (
+    !city ||
+    !countryName ||
+    !countryCode
+  ) {
     return null;
   }
 
@@ -294,10 +523,16 @@ function normalizePlace(p, query) {
     null;
 
   const regionCode =
-    findSubdivisionCode(a, countryCode);
+    findSubdivisionCode(
+      a,
+      countryCode
+    );
 
-  const lat = Number(p.lat);
-  const lon = Number(p.lon);
+  const lat =
+    Number(p.lat);
+
+  const lon =
+    Number(p.lon);
 
   if (
     !Number.isFinite(lat) ||
@@ -311,7 +546,10 @@ function normalizePlace(p, query) {
   }
 
   const searchNames =
-    collectSearchNames(p, city);
+    collectSearchNames(
+      p,
+      city
+    );
 
   const match =
     findBestMatch(
@@ -329,10 +567,14 @@ function normalizePlace(p, query) {
   return {
     city,
 
-    country: countryCode,
+    country:
+      countryCode,
+
     countryName,
 
-    region: regionCode,
+    region:
+      regionCode,
+
     regionName,
 
     lat,
@@ -341,11 +583,18 @@ function normalizePlace(p, query) {
     displayLabel:
       displayParts.join(", "),
 
-    matchedName: match.name,
-    matchType: match.type,
-    score: match.score,
+    matchedName:
+      match.name,
 
-    osmType: p.type || null,
+    matchType:
+      match.type,
+
+    score:
+      match.score,
+
+    osmType:
+      p.type || null,
+
     osmClass:
       p.class ||
       p.category ||
@@ -355,16 +604,22 @@ function normalizePlace(p, query) {
 
 
 /*
- * ALTERNATIVE / LOCAL / HISTORICAL NAMES
+ * SEARCH NAMES
  */
 
-function collectSearchNames(p, city) {
-  const names = new Set();
+function collectSearchNames(
+  p,
+  city
+) {
+  const names =
+    new Set();
 
   names.add(city);
 
   if (p.name) {
-    names.add(p.name);
+    names.add(
+      p.name
+    );
   }
 
   const namedetails =
@@ -372,7 +627,9 @@ function collectSearchNames(p, city) {
 
   for (
     const [key, value]
-    of Object.entries(namedetails)
+    of Object.entries(
+      namedetails
+    )
   ) {
     if (
       typeof value === "string" &&
@@ -387,7 +644,9 @@ function collectSearchNames(p, city) {
         key.includes("short_name") ||
         key.includes("loc_name")
       ) {
-        names.add(value.trim());
+        names.add(
+          value.trim()
+        );
       }
     }
   }
@@ -401,20 +660,29 @@ function collectSearchNames(p, city) {
     "alt_name",
     "short_name",
     "loc_name"
-  ].forEach(key => {
-    const value = extras[key];
+  ].forEach(
+    key => {
+      const value =
+        extras[key];
 
-    if (
-      typeof value === "string" &&
-      value.trim()
-    ) {
-      value
-        .split(";")
-        .map(v => v.trim())
-        .filter(Boolean)
-        .forEach(v => names.add(v));
+      if (
+        typeof value === "string" &&
+        value.trim()
+      ) {
+        value
+          .split(";")
+          .map(
+            v =>
+              v.trim()
+          )
+          .filter(Boolean)
+          .forEach(
+            v =>
+              names.add(v)
+          );
+      }
     }
-  });
+  );
 
   return [...names];
 }
@@ -424,16 +692,28 @@ function collectSearchNames(p, city) {
  * SEARCH RANKING
  */
 
-function findBestMatch(query, city, names) {
+function findBestMatch(
+  query,
+  city,
+  names
+) {
   const q =
-    normalizeText(query);
+    normalizeText(
+      query
+    );
 
   const normalizedCity =
-    normalizeText(city);
+    normalizeText(
+      city
+    );
 
   let best = {
-    name: city,
-    type: "locality",
+    name:
+      city,
+
+    type:
+      "locality",
+
     score:
       similarityScore(
         q,
@@ -441,48 +721,61 @@ function findBestMatch(query, city, names) {
       )
   };
 
-  if (normalizedCity === q) {
+  if (
+    normalizedCity === q
+  ) {
     best.score = 1000;
-    best.type = "exact locality";
+    best.type =
+      "exact locality";
   }
 
   else if (
     normalizedCity.startsWith(q)
   ) {
     best.score = 900;
-    best.type = "locality";
+    best.type =
+      "locality";
   }
 
-  for (const name of names) {
+  for (
+    const name of names
+  ) {
     const n =
-      normalizeText(name);
+      normalizeText(
+        name
+      );
 
     let score =
-      similarityScore(q, n);
+      similarityScore(
+        q,
+        n
+      );
 
     let type =
       "related name";
 
     if (n === q) {
       score = 850;
-      type = "matching name";
+      type =
+        "matching name";
     }
 
     else if (
       n.startsWith(q)
     ) {
       score = 750;
-      type = "related name";
     }
 
     else if (
       n.includes(q)
     ) {
       score = 650;
-      type = "related name";
     }
 
-    if (score > best.score) {
+    if (
+      score >
+      best.score
+    ) {
       best = {
         name,
         type,
@@ -495,7 +788,10 @@ function findBestMatch(query, city, names) {
 }
 
 
-function similarityScore(a, b) {
+function similarityScore(
+  a,
+  b
+) {
   if (!a || !b) {
     return 0;
   }
@@ -504,16 +800,23 @@ function similarityScore(a, b) {
     return 100;
   }
 
-  if (b.startsWith(a)) {
+  if (
+    b.startsWith(a)
+  ) {
     return 90;
   }
 
-  if (b.includes(a)) {
+  if (
+    b.includes(a)
+  ) {
     return 75;
   }
 
   const distance =
-    levenshtein(a, b);
+    levenshtein(
+      a,
+      b
+    );
 
   const maxLength =
     Math.max(
@@ -527,12 +830,19 @@ function similarityScore(a, b) {
 
   return Math.round(
     60 *
-    (1 - distance / maxLength)
+    (
+      1 -
+      distance /
+      maxLength
+    )
   );
 }
 
 
-function levenshtein(a, b) {
+function levenshtein(
+  a,
+  b
+) {
   const matrix = [];
 
   for (
@@ -578,12 +888,20 @@ function levenshtein(a, b) {
     }
   }
 
-  return matrix[b.length][a.length];
+  return matrix[
+    b.length
+  ][
+    a.length
+  ];
 }
 
 
-function normalizeText(value) {
-  return String(value || "")
+function normalizeText(
+  value
+) {
+  return String(
+    value || ""
+  )
     .normalize("NFD")
     .replace(
       /[\u0300-\u036f]/g,
@@ -591,7 +909,10 @@ function normalizeText(value) {
     )
     .toLocaleLowerCase()
     .trim()
-    .replace(/\s+/g, " ");
+    .replace(
+      /\s+/g,
+      " "
+    );
 }
 
 
@@ -599,12 +920,20 @@ function normalizeText(value) {
  * DEDUPLICATION
  */
 
-function deduplicatePlaces(places) {
-  const unique = new Map();
+function deduplicatePlaces(
+  places
+) {
+  const unique =
+    new Map();
 
-  for (const place of places) {
+  for (
+    const place
+    of places
+  ) {
     const key = [
-      normalizeText(place.city),
+      normalizeText(
+        place.city
+      ),
 
       place.region ||
         normalizeText(
@@ -619,22 +948,31 @@ function deduplicatePlaces(places) {
 
     if (
       !existing ||
-      place.score > existing.score
+      place.score >
+        existing.score
     ) {
-      unique.set(key, place);
+      unique.set(
+        key,
+        place
+      );
     }
   }
 
-  return [...unique.values()];
+  return [
+    ...unique.values()
+  ];
 }
 
 
 /*
- * RENDER RESULTS
+ * RESULTS
  */
 
-function renderResults(places) {
-  $("results").innerHTML = "";
+function renderResults(
+  places
+) {
+  $("results").innerHTML =
+    "";
 
   if (!places.length) {
     $("results").innerHTML =
@@ -643,56 +981,76 @@ function renderResults(places) {
     return;
   }
 
-  places.forEach(place => {
-    const div =
-      document.createElement("div");
+  places.forEach(
+    place => {
+      const div =
+        document.createElement(
+          "div"
+        );
 
-    div.className = "result";
+      div.className =
+        "result";
 
-    const main =
-      document.createElement("div");
+      const main =
+        document.createElement(
+          "div"
+        );
 
-    main.textContent =
-      place.displayLabel;
+      main.textContent =
+        place.displayLabel;
 
-    div.appendChild(main);
+      div.appendChild(
+        main
+      );
 
-    if (
-      place.matchedName &&
-      normalizeText(
-        place.matchedName
-      ) !==
+      if (
+        place.matchedName &&
         normalizeText(
-          place.city
-        )
-    ) {
-      const reason =
-        document.createElement("div");
+          place.matchedName
+        ) !==
+          normalizeText(
+            place.city
+          )
+      ) {
+        const reason =
+          document.createElement(
+            "div"
+          );
 
-      reason.className = "muted";
+        reason.className =
+          "muted";
 
-      reason.style.fontSize =
-        "0.82em";
+        reason.style.fontSize =
+          "0.82em";
 
-      reason.style.marginTop =
-        "6px";
+        reason.style.marginTop =
+          "6px";
 
-      reason.textContent =
-        `Found via: ${place.matchedName}`;
+        reason.textContent =
+          `Found via: ${place.matchedName}`;
 
-      div.appendChild(reason);
+        div.appendChild(
+          reason
+        );
+      }
+
+      div.onclick =
+        () =>
+          choosePlace(
+            place
+          );
+
+      $("results")
+        .appendChild(
+          div
+        );
     }
-
-    div.onclick =
-      () => choosePlace(place);
-
-    $("results").appendChild(div);
-  });
+  );
 }
 
 
 /*
- * ISO 3166-2 SUBDIVISION
+ * ISO 3166-2
  */
 
 function findSubdivisionCode(
@@ -703,7 +1061,9 @@ function findSubdivisionCode(
 
   for (
     const [key, value]
-    of Object.entries(address)
+    of Object.entries(
+      address
+    )
   ) {
     if (
       key
@@ -711,7 +1071,8 @@ function findSubdivisionCode(
         .startsWith(
           "ISO3166-2-"
         ) &&
-      typeof value === "string"
+      typeof value ===
+        "string"
     ) {
       candidates.push({
         key,
@@ -733,23 +1094,32 @@ function findSubdivisionCode(
     return null;
   }
 
-  valid.sort((a, b) => {
-    return (
-      extractAdminLevel(a.key) -
-      extractAdminLevel(b.key)
-    );
-  });
+  valid.sort(
+    (a, b) =>
+      extractAdminLevel(
+        a.key
+      ) -
+      extractAdminLevel(
+        b.key
+      )
+  );
 
   return valid[0].value;
 }
 
 
-function extractAdminLevel(key) {
+function extractAdminLevel(
+  key
+) {
   const match =
-    key.match(/lvl(\d+)/i);
+    key.match(
+      /lvl(\d+)/i
+    );
 
   return match
-    ? Number(match[1])
+    ? Number(
+        match[1]
+      )
     : 999;
 }
 
@@ -758,12 +1128,16 @@ function extractAdminLevel(key) {
  * SELECT LOCALITY
  */
 
-function choosePlace(place) {
+function choosePlace(
+  place
+) {
   selected = place;
 
   $("selection")
     .classList
-    .remove("hidden");
+    .remove(
+      "hidden"
+    );
 
   const locationParts = [
     place.city,
@@ -772,11 +1146,9 @@ function choosePlace(place) {
   ].filter(Boolean);
 
   $("selection").innerHTML =
-    `<strong>${
-      escapeHtml(
-        locationParts.join(", ")
-      )
-    }</strong>` +
+    `<strong>${escapeHtml(
+      locationParts.join(", ")
+    )}</strong>` +
     `<br>` +
     `<span class="muted">` +
     `${place.lat.toFixed(4)}, ` +
@@ -791,11 +1163,16 @@ function choosePlace(place) {
     );
 
   map.setView(
-    [place.lat, place.lon],
+    [
+      place.lat,
+      place.lon
+    ],
     9
   );
 
-  if (selectedMarker) {
+  if (
+    selectedMarker
+  ) {
     map.removeLayer(
       selectedMarker
     );
@@ -819,7 +1196,7 @@ function choosePlace(place) {
 
 
 /*
- * CLEAR PREVIOUS SELECTION
+ * CLEAR SELECTION
  */
 
 function clearSelection() {
@@ -828,9 +1205,12 @@ function clearSelection() {
   if ($("selection")) {
     $("selection")
       .classList
-      .add("hidden");
+      .add(
+        "hidden"
+      );
 
-    $("selection").innerHTML = "";
+    $("selection").innerHTML =
+      "";
   }
 
   if ($("jsonPreview")) {
@@ -838,12 +1218,15 @@ function clearSelection() {
       "Choose a location to preview the exact data that will be signed.";
   }
 
-  if (selectedMarker) {
+  if (
+    selectedMarker
+  ) {
     map.removeLayer(
       selectedMarker
     );
 
-    selectedMarker = null;
+    selectedMarker =
+      null;
   }
 
   updatePublishButton();
@@ -851,7 +1234,7 @@ function clearSelection() {
 
 
 /*
- * HIVE CENSUS PROTOCOL v1.0
+ * PROTOCOL v1.0 PAYLOAD
  */
 
 function censusPayload() {
@@ -860,8 +1243,11 @@ function censusPayload() {
   }
 
   return {
-    v: PROTOCOL_VERSION,
-    action: "set",
+    v:
+      PROTOCOL_VERSION,
+
+    action:
+      "set",
 
     country:
       selected.country,
@@ -892,167 +1278,201 @@ function censusPayload() {
 
 
 /*
- * REAL HIVE BROADCAST
+ * BROADCAST
+ *
+ * Kept available for the next controlled test.
+ * Do not publish until Keychain diagnostics have
+ * been checked.
  */
 
-$("publishBtn").onclick = () => {
-  if (publishing) {
-    return;
-  }
+$("publishBtn").onclick =
+  () => {
+    if (publishing) {
+      return;
+    }
 
-  const account = getAccount();
-  const payload = censusPayload();
-  const acknowledged = $("permanentAck").checked;
+    const account =
+      getAccount();
 
-  if (!validHiveAccountName(account)) {
+    const payload =
+      censusPayload();
+
+    const acknowledged =
+      $("permanentAck").checked;
+
+    if (
+      !validHiveAccountName(
+        account
+      )
+    ) {
+      setStatus(
+        "Enter a valid Hive account.",
+        true
+      );
+
+      return;
+    }
+
+    if (!payload) {
+      setStatus(
+        "Choose a locality first.",
+        true
+      );
+
+      return;
+    }
+
+    if (!acknowledged) {
+      setStatus(
+        "Confirm that you understand the declaration is permanently recorded in blockchain history.",
+        true
+      );
+
+      return;
+    }
+
+    const detected =
+      getKeychainProvider();
+
+    if (!detected) {
+      setStatus(
+        "No compatible Hive Keychain API detected.",
+        true
+      );
+
+      return;
+    }
+
+    const kc =
+      detected.provider;
+
+    if (
+      typeof kc.requestCustomJson !==
+      "function"
+    ) {
+      setStatus(
+        "Keychain was detected, but requestCustomJson is unavailable.",
+        true
+      );
+
+      return;
+    }
+
+    const json =
+      JSON.stringify(
+        payload
+      );
+
+    publishing = true;
+
+    updatePublishButton();
+
     setStatus(
-      "Enter a valid Hive account.",
-      true
+      "Waiting for approval in Hive Keychain…"
     );
-    return;
-  }
 
-  if (!payload) {
-    setStatus(
-      "Choose a locality first.",
-      true
-    );
-    return;
-  }
+    try {
+      kc.requestCustomJson(
+        account,
+        CUSTOM_JSON_ID,
+        "Posting",
+        json,
+        "Publish Hive Census location",
+        response => {
+          publishing = false;
 
-  if (!acknowledged) {
-    setStatus(
-      "Confirm that you understand the declaration is permanently recorded in blockchain history.",
-      true
-    );
-    return;
-  }
+          updatePublishButton();
 
-  const kc = keychain();
+          console.log(
+            "Hive Census Keychain response:",
+            response
+          );
 
-  if (!kc) {
-    setStatus(
-      "Hive Keychain was not detected in this browser.",
-      true
-    );
-    return;
-  }
-
-  if (
-    typeof kc.requestCustomJson !==
-    "function"
-  ) {
-    setStatus(
-      "This Hive signing provider does not expose requestCustomJson.",
-      true
-    );
-    return;
-  }
-
-  /*
-   * Important:
-   *
-   * The JSON sent to Keychain is exactly the JSON
-   * displayed in the review panel.
-   */
-
-  const json =
-    JSON.stringify(payload);
-
-  publishing = true;
-  updatePublishButton();
-
-  setStatus(
-    "Waiting for approval in Hive Keychain…"
-  );
-
-  try {
-    kc.requestCustomJson(
-      account,
-      CUSTOM_JSON_ID,
-      "Posting",
-      json,
-      "Publish Hive Census location",
-      response => {
-        publishing = false;
-        updatePublishButton();
-
-        console.log(
-          "Hive Census Keychain response:",
-          response
-        );
-
-        if (
-          response &&
-          response.success
-        ) {
-          const txId =
-            response.result &&
-            typeof response.result === "object"
-              ? (
-                  response.result.id ||
-                  response.result.tx_id ||
-                  response.result.txid ||
-                  null
-                )
-              : null;
-
-          if (txId) {
-            setStatus(
-              `Census declaration published successfully. Transaction: ${txId}`
-            );
-          } else {
+          if (
+            response &&
+            response.success
+          ) {
             setStatus(
               "Census declaration published successfully."
             );
+
+            return;
           }
 
-          return;
+          let error =
+            "The operation was cancelled or rejected.";
+
+          if (response) {
+            if (
+              typeof response.message ===
+              "string"
+            ) {
+              error =
+                response.message;
+            }
+
+            else if (
+              typeof response.error ===
+              "string"
+            ) {
+              error =
+                response.error;
+            }
+
+            else if (
+              response.error
+            ) {
+              try {
+                error =
+                  JSON.stringify(
+                    response.error
+                  );
+              } catch (_) {
+                error =
+                  String(
+                    response.error
+                  );
+              }
+            }
+          }
+
+          setStatus(
+            `Publishing failed: ${error}`,
+            true
+          );
         }
+      );
 
-        const error =
-          response &&
-          (
-            response.message ||
-            response.error
-          )
-            ? (
-                response.message ||
-                response.error
-              )
-            : "The operation was cancelled or rejected.";
+    } catch (error) {
+      publishing = false;
 
-        setStatus(
-          `Publishing failed: ${error}`,
-          true
-        );
-      }
-    );
+      updatePublishButton();
 
-  } catch (error) {
-    publishing = false;
-    updatePublishButton();
+      console.error(
+        error
+      );
 
-    console.error(error);
-
-    setStatus(
-      `Publishing failed: ${
-        error &&
-        error.message
-          ? error.message
-          : "Unknown Keychain error."
-      }`,
-      true
-    );
-  }
-};
+      setStatus(
+        "Publishing failed: " +
+        (
+          error &&
+          error.message
+            ? error.message
+            : String(error)
+        ),
+        true
+      );
+    }
+  };
 
 
 /*
  * HTML SAFETY
  */
 
-function escapeHtml(s = "") {
+function escapeHtml(
+  s = ""
+) {
   return String(s).replace(
     /[&<>"']/g,
     m => ({
@@ -1070,29 +1490,25 @@ function escapeHtml(s = "") {
  * MAP
  */
 
-const map = L.map(
-  "mapCanvas",
-  {
-    worldCopyJump: true,
-    zoomControl: true
-  }
-).setView(
-  [28, 12],
-  2
-);
+const map =
+  L.map(
+    "mapCanvas",
+    {
+      worldCopyJump: true,
+      zoomControl: true
+    }
+  ).setView(
+    [28, 12],
+    2
+  );
+
 
 L.tileLayer(
   "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
   {
     maxZoom: 19,
+
     attribution:
       '&copy; OpenStreetMap contributors'
   }
-).addTo(map);
-
-
-/*
- * INITIAL UI STATE
- */
-
-updatePublishButton();
+).
