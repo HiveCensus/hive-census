@@ -47,9 +47,8 @@ $("connectBtn").onclick = () => {
 /*
  * LIVE SEARCH
  *
- * Search begins after 3 characters.
- * Requests are delayed by 500 ms so we do not
- * query the geocoder after every keystroke.
+ * Search starts after 3 characters.
+ * A 500 ms debounce prevents unnecessary requests.
  */
 
 $("placeQuery").addEventListener("input", () => {
@@ -58,8 +57,8 @@ $("placeQuery").addEventListener("input", () => {
   clearTimeout(searchTimer);
 
   /*
-   * A new search means that the previous locality
-   * is no longer considered selected.
+   * Starting another search invalidates the
+   * previously selected locality.
    */
 
   clearSelection();
@@ -79,8 +78,7 @@ $("placeQuery").addEventListener("input", () => {
 
 
 /*
- * Enter still allows the user to force an
- * immediate search.
+ * Enter forces an immediate search.
  */
 
 $("placeQuery").addEventListener("keydown", e => {
@@ -101,27 +99,6 @@ $("placeQuery").addEventListener("keydown", e => {
 
 
 /*
- * Keep compatibility with the existing HTML.
- *
- * The Search button can be removed later.
- * For now, if it still exists, it performs an
- * immediate search.
- */
-
-if ($("searchBtn")) {
-  $("searchBtn").onclick = () => {
-    clearTimeout(searchTimer);
-
-    const q = $("placeQuery").value.trim();
-
-    if (q.length >= 3) {
-      searchPlaces(q);
-    }
-  };
-}
-
-
-/*
  * SEARCH
  */
 
@@ -136,7 +113,7 @@ async function searchPlaces(query) {
 
   /*
    * Cancel an older request if the user has
-   * already entered another search.
+   * already started another search.
    */
 
   if (searchController) {
@@ -173,8 +150,8 @@ async function searchPlaces(query) {
     const data = await res.json();
 
     /*
-     * Ignore the result if the user has already
-     * started another search.
+     * Ignore this response if another search
+     * has already started.
      */
 
     if (lastSearch !== q) {
@@ -185,24 +162,20 @@ async function searchPlaces(query) {
       .map(p => normalizePlace(p, q))
       .filter(place => place !== null);
 
-    /*
-     * Remove duplicate representations of the same
-     * Census locality.
-     */
-
     places = deduplicatePlaces(places);
 
     /*
-     * Rank results instead of aggressively filtering.
+     * Rank results instead of aggressively
+     * filtering them.
      *
-     * This is important for:
+     * This preserves useful searches based on:
      *
      * - alternative names;
      * - historical names;
      * - neighbourhood names;
      * - local names;
      * - transliterations;
-     * - multilingual searches.
+     * - multilingual names.
      */
 
     places.sort((a, b) => {
@@ -240,10 +213,8 @@ function normalizePlace(p, query) {
   const a = p.address || {};
 
   /*
-   * Census locality.
-   *
-   * We intentionally store a locality rather than
-   * neighbourhood/suburb information.
+   * Census stores a locality, not a neighbourhood
+   * or street address.
    */
 
   const city =
@@ -303,25 +274,19 @@ function normalizePlace(p, query) {
 
 
   /*
-   * Collect names that may explain why Nominatim
-   * returned this result.
-   *
-   * This can include:
-   *
-   * - official names;
-   * - local names;
-   * - alternative language names;
-   * - old names;
-   * - the actual OSM feature name.
+   * Collect names that may explain why the
+   * geocoder returned this result.
    */
 
-  const searchNames = collectSearchNames(p, city);
+  const searchNames =
+    collectSearchNames(p, city);
 
-  const match = findBestMatch(
-    query,
-    city,
-    searchNames
-  );
+  const match =
+    findBestMatch(
+      query,
+      city,
+      searchNames
+    );
 
 
   const displayParts = [
@@ -343,14 +308,18 @@ function normalizePlace(p, query) {
     lat,
     lon,
 
-    displayLabel: displayParts.join(", "),
+    displayLabel:
+      displayParts.join(", "),
 
     matchedName: match.name,
     matchType: match.type,
     score: match.score,
 
     osmType: p.type || null,
-    osmClass: p.class || p.category || null
+    osmClass:
+      p.class ||
+      p.category ||
+      null
   };
 }
 
@@ -368,25 +337,17 @@ function collectSearchNames(p, city) {
     names.add(p.name);
   }
 
-  const namedetails = p.namedetails || {};
+  const namedetails =
+    p.namedetails || {};
 
-  for (const [key, value] of Object.entries(namedetails)) {
+  for (
+    const [key, value]
+    of Object.entries(namedetails)
+  ) {
     if (
       typeof value === "string" &&
       value.trim()
     ) {
-      /*
-       * Nominatim may return fields such as:
-       *
-       * name
-       * name:en
-       * name:pl
-       * official_name
-       * old_name
-       * alt_name
-       * short_name
-       */
-
       if (
         key === "name" ||
         key.startsWith("name:") ||
@@ -401,11 +362,14 @@ function collectSearchNames(p, city) {
     }
   }
 
+
   /*
-   * Some useful names can also occur in extratags.
+   * Some useful alternative names may also
+   * occur in Nominatim extratags.
    */
 
-  const extras = p.extratags || {};
+  const extras =
+    p.extratags || {};
 
   [
     "official_name",
@@ -416,7 +380,10 @@ function collectSearchNames(p, city) {
   ].forEach(key => {
     const value = extras[key];
 
-    if (typeof value === "string" && value.trim()) {
+    if (
+      typeof value === "string" &&
+      value.trim()
+    ) {
       value
         .split(";")
         .map(v => v.trim())
@@ -432,28 +399,29 @@ function collectSearchNames(p, city) {
 /*
  * SEARCH RANKING
  *
- * IMPORTANT:
- *
- * We rank results.
- * We do NOT aggressively discard distant matches.
- *
- * This lets searches for local, historical or
- * alternative names remain useful.
+ * Results are ranked, not aggressively filtered.
  */
 
 function findBestMatch(query, city, names) {
-  const q = normalizeText(query);
-  const normalizedCity = normalizeText(city);
+  const q =
+    normalizeText(query);
+
+  const normalizedCity =
+    normalizeText(city);
 
   let best = {
     name: city,
     type: "locality",
-    score: similarityScore(q, normalizedCity)
+    score:
+      similarityScore(
+        q,
+        normalizedCity
+      )
   };
 
 
   /*
-   * Exact Census locality name.
+   * Exact locality.
    */
 
   if (normalizedCity === q) {
@@ -463,40 +431,51 @@ function findBestMatch(query, city, names) {
 
 
   /*
-   * Census locality starts with the query.
+   * Locality beginning with the search phrase.
    *
    * Example:
    *
    * Janów -> Janów Lubelski
    */
 
-  else if (normalizedCity.startsWith(q)) {
+  else if (
+    normalizedCity.startsWith(q)
+  ) {
     best.score = 900;
     best.type = "locality";
   }
 
 
   /*
-   * Search all alternative names.
+   * Alternative, local, historical and
+   * multilingual names.
    */
 
   for (const name of names) {
-    const n = normalizeText(name);
+    const n =
+      normalizeText(name);
 
-    let score = similarityScore(q, n);
-    let type = "related name";
+    let score =
+      similarityScore(q, n);
+
+    let type =
+      "related name";
 
     if (n === q) {
       score = 850;
       type = "matching name";
     }
 
-    else if (n.startsWith(q)) {
+    else if (
+      n.startsWith(q)
+    ) {
       score = 750;
       type = "related name";
     }
 
-    else if (n.includes(q)) {
+    else if (
+      n.includes(q)
+    ) {
       score = 650;
       type = "related name";
     }
@@ -535,15 +514,22 @@ function similarityScore(a, b) {
     return 75;
   }
 
-  const distance = levenshtein(a, b);
-  const maxLength = Math.max(a.length, b.length);
+  const distance =
+    levenshtein(a, b);
+
+  const maxLength =
+    Math.max(
+      a.length,
+      b.length
+    );
 
   if (!maxLength) {
     return 0;
   }
 
   return Math.round(
-    60 * (1 - distance / maxLength)
+    60 *
+    (1 - distance / maxLength)
   );
 }
 
@@ -551,25 +537,45 @@ function similarityScore(a, b) {
 function levenshtein(a, b) {
   const matrix = [];
 
-  for (let i = 0; i <= b.length; i++) {
+  for (
+    let i = 0;
+    i <= b.length;
+    i++
+  ) {
     matrix[i] = [i];
   }
 
-  for (let j = 0; j <= a.length; j++) {
+  for (
+    let j = 0;
+    j <= a.length;
+    j++
+  ) {
     matrix[0][j] = j;
   }
 
-  for (let i = 1; i <= b.length; i++) {
-    for (let j = 1; j <= a.length; j++) {
-      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+  for (
+    let i = 1;
+    i <= b.length;
+    i++
+  ) {
+    for (
+      let j = 1;
+      j <= a.length;
+      j++
+    ) {
+      if (
+        b.charAt(i - 1) ===
+        a.charAt(j - 1)
+      ) {
         matrix[i][j] =
           matrix[i - 1][j - 1];
       } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1
-        );
+        matrix[i][j] =
+          Math.min(
+            matrix[i - 1][j - 1] + 1,
+            matrix[i][j - 1] + 1,
+            matrix[i - 1][j] + 1
+          );
       }
     }
   }
@@ -581,8 +587,8 @@ function levenshtein(a, b) {
 /*
  * NORMALIZE TEXT FOR SEARCH
  *
- * Diacritics and case should not prevent a useful
- * match.
+ * Diacritics and capitalization do not affect
+ * ranking.
  *
  * Example:
  *
@@ -592,7 +598,10 @@ function levenshtein(a, b) {
 function normalizeText(value) {
   return String(value || "")
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(
+      /[\u0300-\u036f]/g,
+      ""
+    )
     .toLocaleLowerCase()
     .trim()
     .replace(/\s+/g, " ");
@@ -609,16 +618,20 @@ function deduplicatePlaces(places) {
   for (const place of places) {
     const key = [
       normalizeText(place.city),
-      place.region || normalizeText(place.regionName),
+      place.region ||
+        normalizeText(
+          place.regionName
+        ),
       place.country
     ].join("|");
 
-    const existing = unique.get(key);
+    const existing =
+      unique.get(key);
 
     /*
-     * If Nominatim returned multiple representations
-     * of the same locality, keep the one that best
-     * matches the user's query.
+     * If multiple OSM objects resolve to the
+     * same Census locality, keep the result
+     * with the strongest match.
      */
 
     if (
@@ -634,7 +647,7 @@ function deduplicatePlaces(places) {
 
 
 /*
- * RENDER SEARCH RESULTS
+ * RENDER RESULTS
  */
 
 function renderResults(places) {
@@ -643,53 +656,63 @@ function renderResults(places) {
   if (!places.length) {
     $("results").innerHTML =
       '<div class="muted">No localities found.</div>';
+
     return;
   }
 
   places.forEach(place => {
-    const div = document.createElement("div");
+    const div =
+      document.createElement("div");
 
     div.className = "result";
 
 
-    const main = document.createElement("div");
+    const main =
+      document.createElement("div");
 
-    main.textContent = place.displayLabel;
+    main.textContent =
+      place.displayLabel;
 
     div.appendChild(main);
 
 
     /*
-     * If the search matched another known name,
-     * explain why this result appeared.
+     * Explain non-obvious search results.
      *
-     * Example:
-     *
-     * Kaufhaus
-     * Ruda Śląska, Silesian Voivodeship, Poland
-     *
-     * Matched: Kaufhaus
+     * "Found via" deliberately does NOT claim
+     * that the matched phrase is another name
+     * for the Census locality itself.
      */
 
     if (
       place.matchedName &&
-      normalizeText(place.matchedName) !==
-        normalizeText(place.city)
+      normalizeText(
+        place.matchedName
+      ) !==
+        normalizeText(
+          place.city
+        )
     ) {
-      const reason = document.createElement("div");
+      const reason =
+        document.createElement("div");
 
       reason.className = "muted";
-      reason.style.fontSize = "0.82em";
-      reason.style.marginTop = "6px";
+
+      reason.style.fontSize =
+        "0.82em";
+
+      reason.style.marginTop =
+        "6px";
 
       reason.textContent =
-        `Matched: ${place.matchedName}`;
+        `Found via: ${place.matchedName}`;
 
       div.appendChild(reason);
     }
 
 
-    div.onclick = () => choosePlace(place);
+    div.onclick =
+      () => choosePlace(place);
 
     $("results").appendChild(div);
   });
@@ -700,24 +723,39 @@ function renderResults(places) {
  * ISO 3166-2 SUBDIVISION
  */
 
-function findSubdivisionCode(address, countryCode) {
+function findSubdivisionCode(
+  address,
+  countryCode
+) {
   const candidates = [];
 
-  for (const [key, value] of Object.entries(address)) {
+  for (
+    const [key, value]
+    of Object.entries(address)
+  ) {
     if (
-      key.toUpperCase().startsWith("ISO3166-2-") &&
+      key
+        .toUpperCase()
+        .startsWith(
+          "ISO3166-2-"
+        ) &&
       typeof value === "string"
     ) {
       candidates.push({
         key,
-        value: value.toUpperCase()
+        value:
+          value.toUpperCase()
       });
     }
   }
 
-  const valid = candidates.filter(candidate =>
-    candidate.value.startsWith(countryCode + "-")
-  );
+  const valid =
+    candidates.filter(
+      candidate =>
+        candidate.value.startsWith(
+          countryCode + "-"
+        )
+    );
 
   if (!valid.length) {
     return null;
@@ -735,7 +773,8 @@ function findSubdivisionCode(address, countryCode) {
 
 
 function extractAdminLevel(key) {
-  const match = key.match(/lvl(\d+)/i);
+  const match =
+    key.match(/lvl(\d+)/i);
 
   return match
     ? Number(match[1])
@@ -750,7 +789,9 @@ function extractAdminLevel(key) {
 function choosePlace(place) {
   selected = place;
 
-  $("selection").classList.remove("hidden");
+  $("selection")
+    .classList
+    .remove("hidden");
 
   const locationParts = [
     place.city,
@@ -759,10 +800,15 @@ function choosePlace(place) {
   ].filter(Boolean);
 
   $("selection").innerHTML =
-    `<strong>${escapeHtml(locationParts.join(", "))}</strong>` +
+    `<strong>${
+      escapeHtml(
+        locationParts.join(", ")
+      )
+    }</strong>` +
     `<br>` +
     `<span class="muted">` +
-    `${place.lat.toFixed(4)}, ${place.lon.toFixed(4)}` +
+    `${place.lat.toFixed(4)}, ` +
+    `${place.lon.toFixed(4)}` +
     `</span>`;
 
 
@@ -771,11 +817,15 @@ function choosePlace(place) {
    */
 
   $("jsonPreview").textContent =
-    JSON.stringify(censusPayload(), null, 2);
+    JSON.stringify(
+      censusPayload(),
+      null,
+      2
+    );
 
 
   /*
-   * Map.
+   * MAP
    */
 
   map.setView(
@@ -784,18 +834,23 @@ function choosePlace(place) {
   );
 
   if (selectedMarker) {
-    map.removeLayer(selectedMarker);
+    map.removeLayer(
+      selectedMarker
+    );
   }
 
-  selectedMarker = L.marker([
-    place.lat,
-    place.lon
-  ])
-    .addTo(map)
-    .bindPopup(
-      escapeHtml(place.displayLabel)
-    )
-    .openPopup();
+  selectedMarker =
+    L.marker([
+      place.lat,
+      place.lon
+    ])
+      .addTo(map)
+      .bindPopup(
+        escapeHtml(
+          place.displayLabel
+        )
+      )
+      .openPopup();
 }
 
 
@@ -807,7 +862,10 @@ function clearSelection() {
   selected = null;
 
   if ($("selection")) {
-    $("selection").classList.add("hidden");
+    $("selection")
+      .classList
+      .add("hidden");
+
     $("selection").innerHTML = "";
   }
 
@@ -817,7 +875,10 @@ function clearSelection() {
   }
 
   if (selectedMarker) {
-    map.removeLayer(selectedMarker);
+    map.removeLayer(
+      selectedMarker
+    );
+
     selectedMarker = null;
   }
 }
@@ -836,16 +897,30 @@ function censusPayload() {
     v: 1,
     action: "set",
 
-    country: selected.country,
-    country_name: selected.countryName,
+    country:
+      selected.country,
 
-    region: selected.region,
-    region_name: selected.regionName,
+    country_name:
+      selected.countryName,
 
-    city: selected.city,
+    region:
+      selected.region,
 
-    lat: Number(selected.lat.toFixed(4)),
-    lon: Number(selected.lon.toFixed(4))
+    region_name:
+      selected.regionName,
+
+    city:
+      selected.city,
+
+    lat:
+      Number(
+        selected.lat.toFixed(4)
+      ),
+
+    lon:
+      Number(
+        selected.lon.toFixed(4)
+      )
   };
 }
 
