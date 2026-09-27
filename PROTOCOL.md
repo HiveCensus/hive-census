@@ -5,7 +5,7 @@
 **Protocol version:** 1  
 **Custom JSON ID:** `hive_census`  
 **Hive authority:** Posting  
-**Status:** Draft for implementation
+**Status:** Final
 
 Hive Census is an open protocol for publishing self-declared locality information by Hive accounts.
 
@@ -502,7 +502,7 @@ At minimum:
 ```text
 v             integer equal to 1
 action        string equal to "set"
-country       valid two-letter country code
+country       assigned ISO 3166-1 alpha-2 code represented as two uppercase ASCII letters
 country_name  non-empty string
 region        string containing an applicable subdivision code, or null
 region_name   non-empty string, or null
