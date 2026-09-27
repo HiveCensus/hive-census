@@ -7,7 +7,7 @@ let searchController = null;
 let lastSearch = "";
 let publishing = false;
 
-const CENSUS_VERSION = "0.4.1";
+const CENSUS_VERSION = "0.4.2";
 const PROTOCOL_VERSION = 1;
 const CUSTOM_JSON_ID = "hive_census";
 
@@ -30,13 +30,44 @@ function setStatus(msg, bad = false) {
  * KEYCHAIN
  */
 
+function inspectKeychain() {
+  const hiveKeychain = window.hive_keychain;
+  const hive = window.hive;
+
+  return {
+    hiveKeychainExists: !!hiveKeychain,
+    hiveExists: !!hive,
+
+    hiveKeychainHandshake:
+      !!hiveKeychain &&
+      typeof hiveKeychain.requestHandshake === "function",
+
+    hiveKeychainCustomJson:
+      !!hiveKeychain &&
+      typeof hiveKeychain.requestCustomJson === "function",
+
+    hiveHandshake:
+      !!hive &&
+      typeof hive.requestHandshake === "function",
+
+    hiveCustomJson:
+      !!hive &&
+      typeof hive.requestCustomJson === "function"
+  };
+}
+
+
 function getKeychainProvider() {
   /*
-   * Prefer the traditional Hive Keychain API.
+   * Standard Hive Keychain object.
    */
   if (
     window.hive_keychain &&
-    typeof window.hive_keychain === "object"
+    typeof window.hive_keychain === "object" &&
+    (
+      typeof window.hive_keychain.requestHandshake === "function" ||
+      typeof window.hive_keychain.requestCustomJson === "function"
+    )
   ) {
     return {
       provider: window.hive_keychain,
@@ -45,11 +76,11 @@ function getKeychainProvider() {
   }
 
   /*
-   * Some newer/compatible environments may expose
-   * a signing API through window.hive.
+   * Alternative compatible API.
    *
-   * We accept it only if it actually exposes at least
-   * one Keychain-style method.
+   * Do not treat window.hive as Keychain merely
+   * because the object exists. It must expose a
+   * Keychain-compatible method.
    */
   if (
     window.hive &&
@@ -79,134 +110,288 @@ function keychain() {
 
 
 /*
- * DIAGNOSTIC KEYCHAIN CHECK
+ * KEYCHAIN BUTTON UI
+ */
+
+function setKeychainButton(text, state = "normal") {
+  const button = $("handshakeBtn");
+
+  if (!button) return;
+
+  button.textContent = text;
+
+  if (state === "checking") {
+    button.disabled = true;
+    button.style.opacity = "0.75";
+  }
+
+  else {
+    button.disabled = false;
+    button.style.opacity = "1";
+  }
+}
+
+
+/*
+ * KEYCHAIN DIAGNOSTIC
  */
 
 function checkKeychain() {
-  setStatus("Checking Hive Keychain…");
-
-  const hasHiveKeychain =
-    !!window.hive_keychain;
-
-  const hasHive =
-    !!window.hive;
-
-  const detected =
-    getKeychainProvider();
-
-  if (!detected) {
-    setStatus(
-      "Keychain diagnostic: " +
-      `window.hive_keychain=${hasHiveKeychain ? "YES" : "NO"} · ` +
-      `window.hive=${hasHive ? "YES" : "NO"} · ` +
-      "No compatible Keychain API detected.",
-      true
-    );
-
-    return;
-  }
-
-  const kc =
-    detected.provider;
-
-  const hasHandshake =
-    typeof kc.requestHandshake === "function";
-
-  const hasCustomJson =
-    typeof kc.requestCustomJson === "function";
-
   /*
-   * First show what the browser exposes.
-   * This happens BEFORE attempting a handshake,
-   * so the button can no longer appear to do nothing.
+   * This change is deliberately visible directly
+   * on the button. If this text changes, we know
+   * the click handler itself is working.
    */
 
+  setKeychainButton(
+    "Checking…",
+    "checking"
+  );
+
   setStatus(
-    "Keychain API detected: " +
-    `${detected.name} · ` +
-    `Handshake=${hasHandshake ? "YES" : "NO"} · ` +
-    `Custom JSON=${hasCustomJson ? "YES" : "NO"}`
+    "Checking Hive Keychain…"
+  );
+
+  console.log(
+    "Hive Census: Check Keychain clicked."
   );
 
   /*
-   * A working requestCustomJson is the capability
-   * Census ultimately needs.
+   * Small delay gives an injected browser API
+   * an opportunity to become available.
    */
+  setTimeout(() => {
+    const diagnostic =
+      inspectKeychain();
 
-  if (!hasHandshake) {
-    if (hasCustomJson) {
-      setStatus(
-        "Keychain API detected. " +
-        `${detected.name} · ` +
-        "Handshake=NO · Custom JSON=YES. " +
-        "The browser exposes the function required by Hive Census."
+    console.log(
+      "Hive Census Keychain diagnostic:",
+      diagnostic
+    );
+
+    const detected =
+      getKeychainProvider();
+
+    /*
+     * NOTHING DETECTED
+     */
+
+    if (!detected) {
+      setKeychainButton(
+        "Keychain not detected ✕"
       );
-    } else {
+
       setStatus(
-        "Keychain API detected, but requestHandshake and requestCustomJson are unavailable.",
+        "Keychain diagnostic: " +
+        `window.hive_keychain=${diagnostic.hiveKeychainExists ? "YES" : "NO"} · ` +
+        `window.hive=${diagnostic.hiveExists ? "YES" : "NO"} · ` +
+        "No compatible Keychain API detected.",
         true
       );
+
+      return;
     }
 
-    return;
-  }
 
-  /*
-   * Attempt handshake as an additional diagnostic.
-   *
-   * If mobile Keychain does not call the callback,
-   * the previous diagnostic remains useful.
-   */
+    const kc =
+      detected.provider;
 
-  let callbackReceived = false;
+    const hasHandshake =
+      typeof kc.requestHandshake === "function";
 
-  try {
-    kc.requestHandshake(() => {
-      callbackReceived = true;
+    const hasCustomJson =
+      typeof kc.requestCustomJson === "function";
+
+
+    /*
+     * API EXISTS BUT HANDSHAKE DOES NOT
+     */
+
+    if (!hasHandshake) {
+      if (hasCustomJson) {
+        setKeychainButton(
+          "Keychain API detected ✓"
+        );
+
+        setStatus(
+          "Keychain API detected: " +
+          `${detected.name} · ` +
+          "Handshake=NO · Custom JSON=YES."
+        );
+      }
+
+      else {
+        setKeychainButton(
+          "Keychain incomplete ✕"
+        );
+
+        setStatus(
+          "A possible Keychain object was detected, " +
+          "but neither requestHandshake nor requestCustomJson is available.",
+          true
+        );
+      }
+
+      return;
+    }
+
+
+    /*
+     * HANDSHAKE TEST
+     */
+
+    let finished = false;
+
+    const finishSuccess = () => {
+      if (finished) return;
+
+      finished = true;
+
+      setKeychainButton(
+        "Keychain detected ✓"
+      );
 
       setStatus(
         "Hive Keychain handshake successful. " +
         `${detected.name} · ` +
         `Custom JSON=${hasCustomJson ? "YES" : "NO"}`
       );
-    });
+    };
 
-    /*
-     * Give the mobile browser a moment to respond.
-     * If no callback arrives, report that fact instead
-     * of leaving the user with no feedback.
-     */
 
-    setTimeout(() => {
-      if (!callbackReceived) {
+    try {
+      const result =
+        kc.requestHandshake(
+          response => {
+            console.log(
+              "Hive Census handshake callback:",
+              response
+            );
+
+            finishSuccess();
+          }
+        );
+
+
+      /*
+       * Support an implementation that returns
+       * a Promise instead of using only a callback.
+       */
+
+      if (
+        result &&
+        typeof result.then === "function"
+      ) {
+        result
+          .then(response => {
+            console.log(
+              "Hive Census handshake promise:",
+              response
+            );
+
+            finishSuccess();
+          })
+          .catch(error => {
+            if (finished) return;
+
+            finished = true;
+
+            console.error(
+              "Hive Census handshake promise error:",
+              error
+            );
+
+            setKeychainButton(
+              "Handshake failed ✕"
+            );
+
+            setStatus(
+              "Keychain API was detected, but handshake failed. " +
+              `Custom JSON=${hasCustomJson ? "YES" : "NO"}.`,
+              true
+            );
+          });
+      }
+
+
+      /*
+       * If the mobile browser exposes the API but
+       * never calls the handshake callback, show
+       * that explicitly after 3 seconds.
+       */
+
+      setTimeout(() => {
+        if (finished) return;
+
+        finished = true;
+
+        if (hasCustomJson) {
+          setKeychainButton(
+            "Keychain API detected ✓"
+          );
+
+          setStatus(
+            "Keychain API detected, but the handshake did not return. " +
+            `${detected.name} · Custom JSON=YES.`
+          );
+        }
+
+        else {
+          setKeychainButton(
+            "Handshake no response"
+          );
+
+          setStatus(
+            "Keychain API detected, but the handshake did not return " +
+            "and requestCustomJson is unavailable.",
+            true
+          );
+        }
+      }, 3000);
+
+    } catch (error) {
+      finished = true;
+
+      console.error(
+        "Hive Census Keychain handshake error:",
+        error
+      );
+
+      if (hasCustomJson) {
+        setKeychainButton(
+          "Keychain API detected ✓"
+        );
+
         setStatus(
-          "Keychain API detected, but no handshake callback was received. " +
-          `${detected.name} · ` +
-          `Custom JSON=${hasCustomJson ? "YES" : "NO"}. ` +
-          "This may be normal for this mobile Keychain environment."
+          "Keychain API detected. " +
+          "Handshake produced an error, but Custom JSON=YES."
         );
       }
-    }, 2000);
 
-  } catch (error) {
-    console.error(
-      "Hive Census Keychain handshake error:",
-      error
-    );
+      else {
+        setKeychainButton(
+          "Keychain error ✕"
+        );
 
-    setStatus(
-      "Keychain API detected, but handshake produced an error: " +
-      (
-        error && error.message
-          ? error.message
-          : String(error)
-      ) +
-      `. Custom JSON=${hasCustomJson ? "YES" : "NO"}.`,
-      true
-    );
-  }
+        setStatus(
+          "Keychain handshake error: " +
+          (
+            error && error.message
+              ? error.message
+              : String(error)
+          ),
+          true
+        );
+      }
+    }
+
+  }, 500);
 }
 
+
+/*
+ * KEYCHAIN BUTTONS
+ */
 
 $("handshakeBtn").onclick =
   checkKeychain;
@@ -215,12 +400,9 @@ $("handshakeBtn").onclick =
 $("connectBtn").onclick = () => {
   location.hash = "join";
 
-  /*
-   * Give scrolling a moment to finish.
-   */
   setTimeout(
     checkKeychain,
-    100
+    300
   );
 };
 
@@ -239,11 +421,6 @@ function getAccount() {
 
 
 function validHiveAccountName(account) {
-  /*
-   * Conservative local check only.
-   * Hive/Keychain remains authoritative.
-   */
-
   return /^[a-z][a-z0-9.-]{2,15}$/.test(
     account
   );
@@ -1279,10 +1456,6 @@ function censusPayload() {
 
 /*
  * BROADCAST
- *
- * Kept available for the next controlled test.
- * Do not publish until Keychain diagnostics have
- * been checked.
  */
 
 $("publishBtn").onclick =
