@@ -1511,4 +1511,11 @@ L.tileLayer(
     attribution:
       '&copy; OpenStreetMap contributors'
   }
-).
+).addTo(map);
+
+
+/*
+ * INITIAL STATE
+ */
+
+updatePublishButton();
