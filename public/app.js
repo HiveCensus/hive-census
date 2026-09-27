@@ -2,6 +2,14 @@ const $ = id => document.getElementById(id);
 
 let selected = null;
 let selectedMarker = null;
+let searchTimer = null;
+let searchController = null;
+let lastSearch = "";
+
+
+/*
+ * BASIC UI
+ */
 
 function setStatus(msg, bad = false) {
   $("status").textContent = msg;
@@ -35,25 +43,107 @@ $("connectBtn").onclick = () => {
   checkKeychain();
 };
 
-$("searchBtn").onclick = searchPlaces;
+
+/*
+ * LIVE SEARCH
+ *
+ * Search begins after 3 characters.
+ * Requests are delayed by 500 ms so we do not
+ * query the geocoder after every keystroke.
+ */
+
+$("placeQuery").addEventListener("input", () => {
+  const q = $("placeQuery").value.trim();
+
+  clearTimeout(searchTimer);
+
+  /*
+   * A new search means that the previous locality
+   * is no longer considered selected.
+   */
+
+  clearSelection();
+
+  if (q.length < 3) {
+    $("results").innerHTML = "";
+    return;
+  }
+
+  $("results").innerHTML =
+    '<div class="muted">Searching…</div>';
+
+  searchTimer = setTimeout(() => {
+    searchPlaces(q);
+  }, 500);
+});
+
+
+/*
+ * Enter still allows the user to force an
+ * immediate search.
+ */
 
 $("placeQuery").addEventListener("keydown", e => {
-  if (e.key === "Enter") {
-    searchPlaces();
+  if (e.key !== "Enter") {
+    return;
+  }
+
+  e.preventDefault();
+
+  clearTimeout(searchTimer);
+
+  const q = $("placeQuery").value.trim();
+
+  if (q.length >= 3) {
+    searchPlaces(q);
   }
 });
 
 
 /*
- * LOCALITY SEARCH
+ * Keep compatibility with the existing HTML.
+ *
+ * The Search button can be removed later.
+ * For now, if it still exists, it performs an
+ * immediate search.
  */
 
-async function searchPlaces() {
-  const q = $("placeQuery").value.trim();
+if ($("searchBtn")) {
+  $("searchBtn").onclick = () => {
+    clearTimeout(searchTimer);
 
-  if (q.length < 2) {
+    const q = $("placeQuery").value.trim();
+
+    if (q.length >= 3) {
+      searchPlaces(q);
+    }
+  };
+}
+
+
+/*
+ * SEARCH
+ */
+
+async function searchPlaces(query) {
+  const q = query.trim();
+
+  if (q.length < 3) {
     return;
   }
+
+  lastSearch = q;
+
+  /*
+   * Cancel an older request if the user has
+   * already entered another search.
+   */
+
+  if (searchController) {
+    searchController.abort();
+  }
+
+  searchController = new AbortController();
 
   $("results").innerHTML =
     '<div class="muted">Searching…</div>';
@@ -64,14 +154,16 @@ async function searchPlaces() {
       "?format=jsonv2" +
       "&addressdetails=1" +
       "&namedetails=1" +
-      "&limit=10" +
+      "&extratags=1" +
+      "&limit=20" +
       "&q=" +
       encodeURIComponent(q);
 
     const res = await fetch(url, {
       headers: {
         "Accept-Language": "en"
-      }
+      },
+      signal: searchController.signal
     });
 
     if (!res.ok) {
@@ -80,43 +172,58 @@ async function searchPlaces() {
 
     const data = await res.json();
 
-    $("results").innerHTML = "";
-
     /*
-     * Normalize Nominatim results and then remove
-     * duplicate representations of the same locality.
+     * Ignore the result if the user has already
+     * started another search.
      */
 
-    const places = deduplicatePlaces(
-      data
-        .map(normalizePlace)
-        .filter(place => place !== null)
-    );
-
-    places.forEach(place => {
-      const div = document.createElement("div");
-
-      div.className = "result";
-
-      /*
-       * User-facing format:
-       *
-       * Katowice, Silesian Voivodeship, Poland
-       */
-
-      div.textContent = place.displayLabel;
-
-      div.onclick = () => choosePlace(place);
-
-      $("results").appendChild(div);
-    });
-
-    if (!places.length) {
-      $("results").innerHTML =
-        '<div class="muted">No localities found.</div>';
+    if (lastSearch !== q) {
+      return;
     }
 
+    let places = data
+      .map(p => normalizePlace(p, q))
+      .filter(place => place !== null);
+
+    /*
+     * Remove duplicate representations of the same
+     * Census locality.
+     */
+
+    places = deduplicatePlaces(places);
+
+    /*
+     * Rank results instead of aggressively filtering.
+     *
+     * This is important for:
+     *
+     * - alternative names;
+     * - historical names;
+     * - neighbourhood names;
+     * - local names;
+     * - transliterations;
+     * - multilingual searches.
+     */
+
+    places.sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+
+      return a.displayLabel.localeCompare(
+        b.displayLabel,
+        undefined,
+        { sensitivity: "base" }
+      );
+    });
+
+    renderResults(places);
+
   } catch (e) {
+    if (e.name === "AbortError") {
+      return;
+    }
+
     console.error(e);
 
     $("results").innerHTML =
@@ -126,43 +233,18 @@ async function searchPlaces() {
 
 
 /*
- * REMOVE DUPLICATE LOCALITIES
- *
- * Nominatim can return multiple OSM objects that
- * represent the same city or town.
- *
- * Hive Census should show one choice for the same
- * locality / region / country combination.
+ * NORMALIZE NOMINATIM RESULT
  */
 
-function deduplicatePlaces(places) {
-  const unique = new Map();
-
-  for (const place of places) {
-    const key = [
-      place.city.toLocaleLowerCase(),
-      place.region || place.regionName || "",
-      place.country
-    ].join("|");
-
-    if (!unique.has(key)) {
-      unique.set(key, place);
-    }
-  }
-
-  return [...unique.values()];
-}
-
-
-/*
- * NORMALIZE GEOCODER RESULT
- *
- * Converts Nominatim data into fields used by
- * Hive Census Protocol v1.0.
- */
-
-function normalizePlace(p) {
+function normalizePlace(p, query) {
   const a = p.address || {};
+
+  /*
+   * Census locality.
+   *
+   * We intentionally store a locality rather than
+   * neighbourhood/suburb information.
+   */
 
   const city =
     a.city ||
@@ -181,25 +263,13 @@ function normalizePlace(p) {
       ? a.country_code.toUpperCase()
       : null;
 
-  /*
-   * Census requires a locality and country.
-   */
-
   if (!city || !countryName || !countryCode) {
     return null;
   }
 
 
   /*
-   * Human-readable first-level administrative region.
-   *
-   * For Poland this should resolve to:
-   *
-   * Silesian Voivodeship
-   *
-   * We deliberately do NOT fall back to county or
-   * state_district here. Those can represent lower
-   * administrative structures such as Metropolis GZM.
+   * Human-readable administrative region.
    */
 
   const regionName =
@@ -210,11 +280,7 @@ function normalizePlace(p) {
 
 
   /*
-   * Find ISO 3166-2 subdivision code.
-   *
-   * Example:
-   *
-   * PL-24 = Silesian Voivodeship
+   * ISO 3166-2 subdivision.
    */
 
   const regionCode =
@@ -237,8 +303,26 @@ function normalizePlace(p) {
 
 
   /*
-   * User-facing locality name.
+   * Collect names that may explain why Nominatim
+   * returned this result.
+   *
+   * This can include:
+   *
+   * - official names;
+   * - local names;
+   * - alternative language names;
+   * - old names;
+   * - the actual OSM feature name.
    */
+
+  const searchNames = collectSearchNames(p, city);
+
+  const match = findBestMatch(
+    query,
+    city,
+    searchNames
+  );
+
 
   const displayParts = [
     city,
@@ -259,13 +343,361 @@ function normalizePlace(p) {
     lat,
     lon,
 
-    displayLabel: displayParts.join(", ")
+    displayLabel: displayParts.join(", "),
+
+    matchedName: match.name,
+    matchType: match.type,
+    score: match.score,
+
+    osmType: p.type || null,
+    osmClass: p.class || p.category || null
   };
 }
 
 
 /*
- * FIND ISO 3166-2 SUBDIVISION
+ * ALTERNATIVE / LOCAL / HISTORICAL NAMES
+ */
+
+function collectSearchNames(p, city) {
+  const names = new Set();
+
+  names.add(city);
+
+  if (p.name) {
+    names.add(p.name);
+  }
+
+  const namedetails = p.namedetails || {};
+
+  for (const [key, value] of Object.entries(namedetails)) {
+    if (
+      typeof value === "string" &&
+      value.trim()
+    ) {
+      /*
+       * Nominatim may return fields such as:
+       *
+       * name
+       * name:en
+       * name:pl
+       * official_name
+       * old_name
+       * alt_name
+       * short_name
+       */
+
+      if (
+        key === "name" ||
+        key.startsWith("name:") ||
+        key.includes("official_name") ||
+        key.includes("old_name") ||
+        key.includes("alt_name") ||
+        key.includes("short_name") ||
+        key.includes("loc_name")
+      ) {
+        names.add(value.trim());
+      }
+    }
+  }
+
+  /*
+   * Some useful names can also occur in extratags.
+   */
+
+  const extras = p.extratags || {};
+
+  [
+    "official_name",
+    "old_name",
+    "alt_name",
+    "short_name",
+    "loc_name"
+  ].forEach(key => {
+    const value = extras[key];
+
+    if (typeof value === "string" && value.trim()) {
+      value
+        .split(";")
+        .map(v => v.trim())
+        .filter(Boolean)
+        .forEach(v => names.add(v));
+    }
+  });
+
+  return [...names];
+}
+
+
+/*
+ * SEARCH RANKING
+ *
+ * IMPORTANT:
+ *
+ * We rank results.
+ * We do NOT aggressively discard distant matches.
+ *
+ * This lets searches for local, historical or
+ * alternative names remain useful.
+ */
+
+function findBestMatch(query, city, names) {
+  const q = normalizeText(query);
+  const normalizedCity = normalizeText(city);
+
+  let best = {
+    name: city,
+    type: "locality",
+    score: similarityScore(q, normalizedCity)
+  };
+
+
+  /*
+   * Exact Census locality name.
+   */
+
+  if (normalizedCity === q) {
+    best.score = 1000;
+    best.type = "exact locality";
+  }
+
+
+  /*
+   * Census locality starts with the query.
+   *
+   * Example:
+   *
+   * Janów -> Janów Lubelski
+   */
+
+  else if (normalizedCity.startsWith(q)) {
+    best.score = 900;
+    best.type = "locality";
+  }
+
+
+  /*
+   * Search all alternative names.
+   */
+
+  for (const name of names) {
+    const n = normalizeText(name);
+
+    let score = similarityScore(q, n);
+    let type = "related name";
+
+    if (n === q) {
+      score = 850;
+      type = "matching name";
+    }
+
+    else if (n.startsWith(q)) {
+      score = 750;
+      type = "related name";
+    }
+
+    else if (n.includes(q)) {
+      score = 650;
+      type = "related name";
+    }
+
+    if (score > best.score) {
+      best = {
+        name,
+        type,
+        score
+      };
+    }
+  }
+
+  return best;
+}
+
+
+/*
+ * BASIC TEXT SIMILARITY
+ */
+
+function similarityScore(a, b) {
+  if (!a || !b) {
+    return 0;
+  }
+
+  if (a === b) {
+    return 100;
+  }
+
+  if (b.startsWith(a)) {
+    return 90;
+  }
+
+  if (b.includes(a)) {
+    return 75;
+  }
+
+  const distance = levenshtein(a, b);
+  const maxLength = Math.max(a.length, b.length);
+
+  if (!maxLength) {
+    return 0;
+  }
+
+  return Math.round(
+    60 * (1 - distance / maxLength)
+  );
+}
+
+
+function levenshtein(a, b) {
+  const matrix = [];
+
+  for (let i = 0; i <= b.length; i++) {
+    matrix[i] = [i];
+  }
+
+  for (let j = 0; j <= a.length; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] =
+          matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
+  }
+
+  return matrix[b.length][a.length];
+}
+
+
+/*
+ * NORMALIZE TEXT FOR SEARCH
+ *
+ * Diacritics and case should not prevent a useful
+ * match.
+ *
+ * Example:
+ *
+ * Janow -> Janów
+ */
+
+function normalizeText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase()
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+
+/*
+ * DEDUPLICATION
+ */
+
+function deduplicatePlaces(places) {
+  const unique = new Map();
+
+  for (const place of places) {
+    const key = [
+      normalizeText(place.city),
+      place.region || normalizeText(place.regionName),
+      place.country
+    ].join("|");
+
+    const existing = unique.get(key);
+
+    /*
+     * If Nominatim returned multiple representations
+     * of the same locality, keep the one that best
+     * matches the user's query.
+     */
+
+    if (
+      !existing ||
+      place.score > existing.score
+    ) {
+      unique.set(key, place);
+    }
+  }
+
+  return [...unique.values()];
+}
+
+
+/*
+ * RENDER SEARCH RESULTS
+ */
+
+function renderResults(places) {
+  $("results").innerHTML = "";
+
+  if (!places.length) {
+    $("results").innerHTML =
+      '<div class="muted">No localities found.</div>';
+    return;
+  }
+
+  places.forEach(place => {
+    const div = document.createElement("div");
+
+    div.className = "result";
+
+
+    const main = document.createElement("div");
+
+    main.textContent = place.displayLabel;
+
+    div.appendChild(main);
+
+
+    /*
+     * If the search matched another known name,
+     * explain why this result appeared.
+     *
+     * Example:
+     *
+     * Kaufhaus
+     * Ruda Śląska, Silesian Voivodeship, Poland
+     *
+     * Matched: Kaufhaus
+     */
+
+    if (
+      place.matchedName &&
+      normalizeText(place.matchedName) !==
+        normalizeText(place.city)
+    ) {
+      const reason = document.createElement("div");
+
+      reason.className = "muted";
+      reason.style.fontSize = "0.82em";
+      reason.style.marginTop = "6px";
+
+      reason.textContent =
+        `Matched: ${place.matchedName}`;
+
+      div.appendChild(reason);
+    }
+
+
+    div.onclick = () => choosePlace(place);
+
+    $("results").appendChild(div);
+  });
+}
+
+
+/*
+ * ISO 3166-2 SUBDIVISION
  */
 
 function findSubdivisionCode(address, countryCode) {
@@ -283,17 +715,6 @@ function findSubdivisionCode(address, countryCode) {
     }
   }
 
-
-  /*
-   * Only accept subdivisions belonging to
-   * the selected country.
-   *
-   * Example:
-   *
-   * country: PL
-   * subdivision: PL-24
-   */
-
   const valid = candidates.filter(candidate =>
     candidate.value.startsWith(countryCode + "-")
   );
@@ -301,15 +722,6 @@ function findSubdivisionCode(address, countryCode) {
   if (!valid.length) {
     return null;
   }
-
-
-  /*
-   * Prefer the highest-level administrative
-   * subdivision supplied by Nominatim.
-   *
-   * A lower lvl number normally represents
-   * a higher administrative level.
-   */
 
   valid.sort((a, b) => {
     return (
@@ -325,11 +737,9 @@ function findSubdivisionCode(address, countryCode) {
 function extractAdminLevel(key) {
   const match = key.match(/lvl(\d+)/i);
 
-  if (!match) {
-    return 999;
-  }
-
-  return Number(match[1]);
+  return match
+    ? Number(match[1])
+    : 999;
 }
 
 
@@ -357,7 +767,7 @@ function choosePlace(place) {
 
 
   /*
-   * Display exact Protocol v1.0 payload.
+   * Exact Hive Census Protocol v1.0 payload.
    */
 
   $("jsonPreview").textContent =
@@ -365,7 +775,7 @@ function choosePlace(place) {
 
 
   /*
-   * Update map.
+   * Map.
    */
 
   map.setView(
@@ -386,6 +796,30 @@ function choosePlace(place) {
       escapeHtml(place.displayLabel)
     )
     .openPopup();
+}
+
+
+/*
+ * CLEAR PREVIOUS SELECTION
+ */
+
+function clearSelection() {
+  selected = null;
+
+  if ($("selection")) {
+    $("selection").classList.add("hidden");
+    $("selection").innerHTML = "";
+  }
+
+  if ($("jsonPreview")) {
+    $("jsonPreview").textContent =
+      "Select a locality to preview the declaration.";
+  }
+
+  if (selectedMarker) {
+    map.removeLayer(selectedMarker);
+    selectedMarker = null;
+  }
 }
 
 
@@ -419,14 +853,12 @@ function censusPayload() {
 /*
  * PUBLISHING
  *
- * Intentionally disabled in v0.3.
- *
- * No Hive transaction is broadcast by this build.
+ * Still intentionally disabled.
  */
 
 $("publishBtn").onclick = () => {
   setStatus(
-    "Publishing is intentionally disabled in v0.3 while Protocol v1.0 payloads are being tested.",
+    "Publishing is intentionally disabled while Hive Census v0.3.1 search and Protocol v1.0 payloads are being tested.",
     true
   );
 };
