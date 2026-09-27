@@ -8,27 +8,10 @@ let searchController = null;
 let lastSearch = "";
 let publishing = false;
 
-const CENSUS_VERSION = "0.5.0";
+const CENSUS_VERSION = "0.6.0";
 const PROTOCOL_VERSION = 1;
 const CUSTOM_JSON_ID = "hive_census";
-
-const HIVE_RPC = "https://api.hive.blog";
-
-/*
- * v0.5.0 TEST INDEX
- *
- * IMPORTANT:
- * These are ONLY accounts whose blockchain history
- * should be inspected.
- *
- * No Census location data is stored here.
- *
- * In the next stage this temporary seed list will be
- * replaced by the global Census indexer.
- */
-const CENSUS_TEST_ACCOUNTS = [
-  "jocieprosza"
-];
+const CENSUS_API = "/api/census";
 
 
 /*
@@ -1551,16 +1534,20 @@ $("publishBtn").onclick =
             response.success
           ) {
             setStatus(
-              "Census declaration published successfully. Reloading Census map…"
+              "Census declaration published successfully. " +
+              "It will appear on the map after the Census indexer processes the new Hive block."
             );
 
             /*
-             * Give the RPC node a moment to expose
-             * the newly included operation.
+             * The global map is derived from the D1 index.
+             * The scheduled indexer may need a few minutes
+             * to process the new irreversible Hive block.
+             *
+             * This refresh is opportunistic only.
              */
             setTimeout(
               loadCensusMap,
-              3500
+              10000
             );
 
             return;
@@ -1631,508 +1618,22 @@ $("publishBtn").onclick =
 
 /*
  * ============================================================
- * HIVE CENSUS READER
+ * GLOBAL HIVE CENSUS READER
  * ============================================================
  *
- * v0.5.0:
+ * v0.6.0
  *
- * Reads custom_json operations directly from Hive.
+ * The frontend no longer knows which Hive accounts
+ * participate in Census.
  *
- * The account list is temporary.
- * Location data is NOT stored in this application.
+ * It reads the current active Census state from:
+ *
+ *     GET /api/census
+ *
+ * The API is backed by the derived D1 index.
+ *
+ * Hive remains the source of truth.
  */
-
-
-/*
- * HIVE JSON-RPC
- */
-
-async function hiveRpc(
-  method,
-  params
-) {
-  const response =
-    await fetch(
-      HIVE_RPC,
-      {
-        method:
-          "POST",
-
-        headers: {
-          "Content-Type":
-            "application/json"
-        },
-
-        body:
-          JSON.stringify({
-            jsonrpc:
-              "2.0",
-
-            method,
-
-            params,
-
-            id:
-              1
-          })
-      }
-    );
-
-  if (!response.ok) {
-    throw new Error(
-      `Hive RPC HTTP ${response.status}`
-    );
-  }
-
-  const data =
-    await response.json();
-
-  if (data.error) {
-    throw new Error(
-      data.error.message ||
-      JSON.stringify(
-        data.error
-      )
-    );
-  }
-
-  return data.result;
-}
-
-
-/*
- * ACCOUNT HISTORY
- *
- * 262144 = custom_json operation filter.
- */
-
-async function getHiveCustomJsonHistory(
-  account
-) {
-  const result =
-    await hiveRpc(
-      "account_history_api.get_account_history",
-      {
-        account,
-
-        start:
-          -1,
-
-        limit:
-          1000,
-
-        include_reversible:
-          true,
-
-        operation_filter_low:
-          262144
-      }
-    );
-
-  if (
-    !result ||
-    !Array.isArray(
-      result.history
-    )
-  ) {
-    return [];
-  }
-
-  return result.history;
-}
-
-
-/*
- * NORMALIZE OPERATION FORMAT
- *
- * Hive nodes/API layers can expose an operation
- * either in the traditional array form:
- *
- * ["custom_json", {...}]
- *
- * or AppBase form:
- *
- * {
- *   type: "custom_json_operation",
- *   value: {...}
- * }
- */
-
-function normalizeHiveOperation(
-  op
-) {
-  if (
-    Array.isArray(op) &&
-    op.length >= 2
-  ) {
-    return {
-      type:
-        op[0],
-
-      value:
-        op[1]
-    };
-  }
-
-  if (
-    op &&
-    typeof op === "object" &&
-    typeof op.type === "string" &&
-    op.value &&
-    typeof op.value === "object"
-  ) {
-    return {
-      type:
-        op.type.replace(
-          /_operation$/,
-          ""
-        ),
-
-      value:
-        op.value
-    };
-  }
-
-  return null;
-}
-
-
-/*
- * VERIFY THAT THE ACCOUNT ACTUALLY AUTHORIZED
- * THE CUSTOM_JSON.
- */
-
-function operationSignedByAccount(
-  value,
-  account
-) {
-  const posting =
-    Array.isArray(
-      value.required_posting_auths
-    )
-      ? value.required_posting_auths
-      : [];
-
-  const active =
-    Array.isArray(
-      value.required_auths
-    )
-      ? value.required_auths
-      : [];
-
-  return (
-    posting.includes(
-      account
-    ) ||
-    active.includes(
-      account
-    )
-  );
-}
-
-
-/*
- * PARSE JSON SAFELY
- */
-
-function parseCustomJson(
-  json
-) {
-  if (
-    typeof json === "object" &&
-    json !== null
-  ) {
-    return json;
-  }
-
-  if (
-    typeof json !== "string"
-  ) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(
-      json
-    );
-  } catch (_) {
-    return null;
-  }
-}
-
-
-/*
- * VALIDATE PROTOCOL v1 SET
- */
-
-function validCensusSet(
-  payload
-) {
-  if (
-    !payload ||
-    typeof payload !== "object"
-  ) {
-    return false;
-  }
-
-  if (
-    payload.v !== 1 ||
-    payload.action !== "set"
-  ) {
-    return false;
-  }
-
-  if (
-    typeof payload.country !== "string" ||
-    !/^[A-Z]{2}$/.test(
-      payload.country
-    )
-  ) {
-    return false;
-  }
-
-  if (
-    typeof payload.country_name !== "string" ||
-    !payload.country_name.trim()
-  ) {
-    return false;
-  }
-
-  if (
-    payload.region !== null &&
-    typeof payload.region !== "string"
-  ) {
-    return false;
-  }
-
-  if (
-    payload.region_name !== null &&
-    typeof payload.region_name !== "string"
-  ) {
-    return false;
-  }
-
-  if (
-    typeof payload.city !== "string" ||
-    !payload.city.trim()
-  ) {
-    return false;
-  }
-
-  if (
-    typeof payload.lat !== "number" ||
-    !Number.isFinite(
-      payload.lat
-    ) ||
-    payload.lat < -90 ||
-    payload.lat > 90
-  ) {
-    return false;
-  }
-
-  if (
-    typeof payload.lon !== "number" ||
-    !Number.isFinite(
-      payload.lon
-    ) ||
-    payload.lon < -180 ||
-    payload.lon > 180
-  ) {
-    return false;
-  }
-
-  return true;
-}
-
-
-/*
- * VALIDATE PROTOCOL v1 UNSET
- */
-
-function validCensusUnset(
-  payload
-) {
-  return (
-    payload &&
-    typeof payload === "object" &&
-    payload.v === 1 &&
-    payload.action === "unset"
-  );
-}
-
-
-/*
- * FIND CURRENT CENSUS STATE
- *
- * History sequence number is used to establish
- * operation order.
- *
- * Latest VALID Hive Census operation wins.
- *
- * Invalid operations are ignored.
- */
-
-async function getCurrentCensusState(
-  account
-) {
-  const history =
-    await getHiveCustomJsonHistory(
-      account
-    );
-
-  /*
-   * Sort newest -> oldest explicitly.
-   */
-  const newestFirst =
-    [...history].sort(
-      (a, b) =>
-        Number(b[0]) -
-        Number(a[0])
-    );
-
-  for (
-    const item
-    of newestFirst
-  ) {
-    if (
-      !Array.isArray(item) ||
-      item.length < 2
-    ) {
-      continue;
-    }
-
-    const historyNumber =
-      item[0];
-
-    const record =
-      item[1];
-
-    if (
-      !record ||
-      !record.op
-    ) {
-      continue;
-    }
-
-    const operation =
-      normalizeHiveOperation(
-        record.op
-      );
-
-    if (!operation) {
-      continue;
-    }
-
-    if (
-      operation.type !==
-      "custom_json"
-    ) {
-      continue;
-    }
-
-    const value =
-      operation.value;
-
-    if (
-      !value ||
-      value.id !==
-        CUSTOM_JSON_ID
-    ) {
-      continue;
-    }
-
-    if (
-      !operationSignedByAccount(
-        value,
-        account
-      )
-    ) {
-      continue;
-    }
-
-    const payload =
-      parseCustomJson(
-        value.json
-      );
-
-    if (!payload) {
-      continue;
-    }
-
-    /*
-     * Unknown protocol versions are ignored
-     * by the v1 reader.
-     */
-    if (
-      payload.v !==
-      PROTOCOL_VERSION
-    ) {
-      continue;
-    }
-
-    if (
-      validCensusUnset(
-        payload
-      )
-    ) {
-      return {
-        account,
-        active:
-          false,
-
-        action:
-          "unset",
-
-        historyNumber,
-
-        block:
-          record.block || null,
-
-        transactionId:
-          record.trx_id || null,
-
-        timestamp:
-          record.timestamp || null
-      };
-    }
-
-    if (
-      validCensusSet(
-        payload
-      )
-    ) {
-      return {
-        account,
-        active:
-          true,
-
-        action:
-          "set",
-
-        payload,
-
-        historyNumber,
-
-        block:
-          record.block || null,
-
-        transactionId:
-          record.trx_id || null,
-
-        timestamp:
-          record.timestamp || null
-      };
-    }
-
-    /*
-     * Invalid hive_census operation:
-     * ignore it and continue looking backwards
-     * for the latest VALID operation.
-     */
-  }
-
-  return null;
-}
 
 
 /*
@@ -2154,32 +1655,103 @@ function clearCensusMarkers() {
 
 
 /*
+ * VALIDATE API RECORD
+ *
+ * This is defensive frontend validation.
+ * Protocol validation is performed by the indexer
+ * before records enter census_current.
+ */
+
+function validCensusApiRecord(
+  record
+) {
+  if (
+    !record ||
+    typeof record !== "object"
+  ) {
+    return false;
+  }
+
+  if (
+    typeof record.account !== "string" ||
+    !record.account.trim()
+  ) {
+    return false;
+  }
+
+  if (
+    typeof record.country !== "string" ||
+    !/^[A-Z]{2}$/.test(
+      record.country
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    typeof record.country_name !== "string" ||
+    !record.country_name.trim()
+  ) {
+    return false;
+  }
+
+  if (
+    typeof record.city !== "string" ||
+    !record.city.trim()
+  ) {
+    return false;
+  }
+
+  if (
+    typeof record.lat !== "number" ||
+    !Number.isFinite(
+      record.lat
+    ) ||
+    record.lat < -90 ||
+    record.lat > 90
+  ) {
+    return false;
+  }
+
+  if (
+    typeof record.lon !== "number" ||
+    !Number.isFinite(
+      record.lon
+    ) ||
+    record.lon < -180 ||
+    record.lon > 180
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+
+/*
  * CREATE CENSUS MARKER
  */
 
 function addCensusMarker(
-  state
+  record
 ) {
   if (
-    !state ||
-    !state.active ||
-    !state.payload
+    !validCensusApiRecord(
+      record
+    )
   ) {
     return null;
   }
 
-  const p =
-    state.payload;
-
   const locationParts = [
-    p.city,
-    p.region_name,
-    p.country_name
+    record.city,
+    record.region_name,
+    record.country_name
   ].filter(Boolean);
 
   const popup =
     `<strong>@${escapeHtml(
-      state.account
+      record.account
     )}</strong>` +
     `<br>` +
     `${escapeHtml(
@@ -2192,8 +1764,8 @@ function addCensusMarker(
 
   const marker =
     L.marker([
-      p.lat,
-      p.lon
+      record.lat,
+      record.lon
     ])
       .addTo(map)
       .bindPopup(
@@ -2209,110 +1781,155 @@ function addCensusMarker(
 
 
 /*
- * LOAD CURRENT CENSUS MAP
+ * LOAD GLOBAL CENSUS MAP
  */
 
 async function loadCensusMap() {
   console.log(
-    `Hive Census v${CENSUS_VERSION}: loading Census state from Hive…`
+    `Hive Census v${CENSUS_VERSION}: loading global Census index…`
   );
 
-  clearCensusMarkers();
+  try {
+    const response =
+      await fetch(
+        CENSUS_API,
+        {
+          method:
+            "GET",
 
-  const activeStates = [];
+          headers: {
+            "Accept":
+              "application/json"
+          },
 
-  for (
-    const account
-    of CENSUS_TEST_ACCOUNTS
-  ) {
-    try {
-      console.log(
-        `Hive Census: reading @${account}`
+          cache:
+            "no-store"
+        }
       );
 
-      const state =
-        await getCurrentCensusState(
-          account
-        );
-
-      console.log(
-        `Hive Census state for @${account}:`,
-        state
-      );
-
-      if (
-        state &&
-        state.active
-      ) {
-        activeStates.push(
-          state
-        );
-
-        addCensusMarker(
-          state
-        );
-      }
-
-    } catch (error) {
-      console.error(
-        `Hive Census: failed to read @${account}:`,
-        error
+    if (!response.ok) {
+      throw new Error(
+        `Census API HTTP ${response.status}`
       );
     }
-  }
 
-  /*
-   * For the first Census record, zoom directly
-   * to the blockchain-derived location.
-   *
-   * With multiple records, fit all markers.
-   */
+    const data =
+      await response.json();
 
-  if (
-    activeStates.length === 1
-  ) {
-    const p =
-      activeStates[0].payload;
+    if (
+      !data ||
+      data.ok !== true ||
+      !Array.isArray(
+        data.census
+      )
+    ) {
+      throw new Error(
+        "Census API returned an invalid response."
+      );
+    }
 
-    map.setView(
-      [
-        p.lat,
-        p.lon
-      ],
-      7
-    );
-  }
+    /*
+     * Only replace existing markers after
+     * a valid API response has been received.
+     *
+     * This prevents a temporary API failure
+     * from unnecessarily clearing the map.
+     */
+    clearCensusMarkers();
 
-  else if (
-    activeStates.length > 1
-  ) {
-    const bounds =
-      L.latLngBounds(
-        activeStates.map(
-          state => [
-            state.payload.lat,
-            state.payload.lon
-          ]
+    const activeRecords = [];
+
+    for (
+      const record
+      of data.census
+    ) {
+      if (
+        !validCensusApiRecord(
+          record
         )
+      ) {
+        console.warn(
+          "Hive Census: invalid API record ignored:",
+          record
+        );
+
+        continue;
+      }
+
+      activeRecords.push(
+        record
       );
 
-    map.fitBounds(
-      bounds,
-      {
-        padding:
-          [40, 40],
+      addCensusMarker(
+        record
+      );
+    }
 
-        maxZoom:
-          8
-      }
+    /*
+     * One declaration:
+     * show its region.
+     *
+     * Multiple declarations:
+     * fit all markers.
+     *
+     * Zero declarations:
+     * retain the default world view.
+     */
+
+    if (
+      activeRecords.length === 1
+    ) {
+      const record =
+        activeRecords[0];
+
+      map.setView(
+        [
+          record.lat,
+          record.lon
+        ],
+        7
+      );
+    }
+
+    else if (
+      activeRecords.length > 1
+    ) {
+      const bounds =
+        L.latLngBounds(
+          activeRecords.map(
+            record => [
+              record.lat,
+              record.lon
+            ]
+          )
+        );
+
+      map.fitBounds(
+        bounds,
+        {
+          padding:
+            [40, 40],
+
+          maxZoom:
+            8
+        }
+      );
+    }
+
+    console.log(
+      `Hive Census: ${activeRecords.length} active Census declaration(s) loaded from global index.`
     );
+
+    return activeRecords;
+
+  } catch (error) {
+    console.error(
+      "Hive Census: failed to load global Census index:",
+      error
+    );
+
+    return [];
   }
-
-  console.log(
-    `Hive Census: ${activeStates.length} active Census declaration(s) loaded.`
-  );
-
-  return activeStates;
 }
 
 
@@ -2382,7 +1999,7 @@ console.log(
 
 
 /*
- * LOAD BLOCKCHAIN-DERIVED CENSUS DATA
+ * LOAD GLOBAL CENSUS DATA
  */
 
 loadCensusMap();
