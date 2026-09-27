@@ -10,7 +10,7 @@ const MAX_MANUAL_SCAN_BLOCKS = 500;
 
 // Automatyczne skanowanie.
 // 100 bloków = ok. 5 minut historii Hive.
-const SCHEDULED_SCAN_BLOCKS = 100;
+const SCHEDULED_SCAN_BLOCKS = 200;
 
 // Ile bloków pobieramy z Hive jednym requestem RPC.
 const BLOCK_BATCH_SIZE = 100;
