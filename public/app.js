@@ -2,14 +2,33 @@ const $ = id => document.getElementById(id);
 
 let selected = null;
 let selectedMarker = null;
+let censusMarkers = [];
 let searchTimer = null;
 let searchController = null;
 let lastSearch = "";
 let publishing = false;
 
-const CENSUS_VERSION = "0.4.2";
+const CENSUS_VERSION = "0.5.0";
 const PROTOCOL_VERSION = 1;
 const CUSTOM_JSON_ID = "hive_census";
+
+const HIVE_RPC = "https://api.hive.blog";
+
+/*
+ * v0.5.0 TEST INDEX
+ *
+ * IMPORTANT:
+ * These are ONLY accounts whose blockchain history
+ * should be inspected.
+ *
+ * No Census location data is stored here.
+ *
+ * In the next stage this temporary seed list will be
+ * replaced by the global Census indexer.
+ */
+const CENSUS_TEST_ACCOUNTS = [
+  "jocieprosza"
+];
 
 
 /*
@@ -58,12 +77,12 @@ function inspectKeychain() {
 
 
 function getKeychainProvider() {
-  /*
-   * Standard Hive Keychain object.
-   */
   if (
     window.hive_keychain &&
-    typeof window.hive_keychain === "object" &&
+    (
+      typeof window.hive_keychain === "object" ||
+      typeof window.hive_keychain === "function"
+    ) &&
     (
       typeof window.hive_keychain.requestHandshake === "function" ||
       typeof window.hive_keychain.requestCustomJson === "function"
@@ -75,16 +94,12 @@ function getKeychainProvider() {
     };
   }
 
-  /*
-   * Alternative compatible API.
-   *
-   * Do not treat window.hive as Keychain merely
-   * because the object exists. It must expose a
-   * Keychain-compatible method.
-   */
   if (
     window.hive &&
-    typeof window.hive === "object" &&
+    (
+      typeof window.hive === "object" ||
+      typeof window.hive === "function"
+    ) &&
     (
       typeof window.hive.requestHandshake === "function" ||
       typeof window.hive.requestCustomJson === "function"
@@ -123,9 +138,7 @@ function setKeychainButton(text, state = "normal") {
   if (state === "checking") {
     button.disabled = true;
     button.style.opacity = "0.75";
-  }
-
-  else {
+  } else {
     button.disabled = false;
     button.style.opacity = "1";
   }
@@ -136,12 +149,10 @@ function setKeychainButton(text, state = "normal") {
  * KEYCHAIN DIAGNOSTIC
  */
 
-function checkKeychain() {
-  /*
-   * This change is deliberately visible directly
-   * on the button. If this text changes, we know
-   * the click handler itself is working.
-   */
+function checkKeychain(event) {
+  if (event) {
+    event.preventDefault();
+  }
 
   setKeychainButton(
     "Checking…",
@@ -156,10 +167,6 @@ function checkKeychain() {
     "Hive Census: Check Keychain clicked."
   );
 
-  /*
-   * Small delay gives an injected browser API
-   * an opportunity to become available.
-   */
   setTimeout(() => {
     const diagnostic =
       inspectKeychain();
@@ -171,10 +178,6 @@ function checkKeychain() {
 
     const detected =
       getKeychainProvider();
-
-    /*
-     * NOTHING DETECTED
-     */
 
     if (!detected) {
       setKeychainButton(
@@ -192,7 +195,6 @@ function checkKeychain() {
       return;
     }
 
-
     const kc =
       detected.provider;
 
@@ -201,11 +203,6 @@ function checkKeychain() {
 
     const hasCustomJson =
       typeof kc.requestCustomJson === "function";
-
-
-    /*
-     * API EXISTS BUT HANDSHAKE DOES NOT
-     */
 
     if (!hasHandshake) {
       if (hasCustomJson) {
@@ -218,9 +215,7 @@ function checkKeychain() {
           `${detected.name} · ` +
           "Handshake=NO · Custom JSON=YES."
         );
-      }
-
-      else {
+      } else {
         setKeychainButton(
           "Keychain incomplete ✕"
         );
@@ -234,11 +229,6 @@ function checkKeychain() {
 
       return;
     }
-
-
-    /*
-     * HANDSHAKE TEST
-     */
 
     let finished = false;
 
@@ -258,7 +248,6 @@ function checkKeychain() {
       );
     };
 
-
     try {
       const result =
         kc.requestHandshake(
@@ -271,12 +260,6 @@ function checkKeychain() {
             finishSuccess();
           }
         );
-
-
-      /*
-       * Support an implementation that returns
-       * a Promise instead of using only a callback.
-       */
 
       if (
         result &&
@@ -301,24 +284,27 @@ function checkKeychain() {
               error
             );
 
-            setKeychainButton(
-              "Handshake failed ✕"
-            );
+            if (hasCustomJson) {
+              setKeychainButton(
+                "Keychain API detected ✓"
+              );
 
-            setStatus(
-              "Keychain API was detected, but handshake failed. " +
-              `Custom JSON=${hasCustomJson ? "YES" : "NO"}.`,
-              true
-            );
+              setStatus(
+                "Keychain API detected. " +
+                "Handshake returned an error, but Custom JSON=YES."
+              );
+            } else {
+              setKeychainButton(
+                "Handshake failed ✕"
+              );
+
+              setStatus(
+                "Keychain API was detected, but handshake failed.",
+                true
+              );
+            }
           });
       }
-
-
-      /*
-       * If the mobile browser exposes the API but
-       * never calls the handshake callback, show
-       * that explicitly after 3 seconds.
-       */
 
       setTimeout(() => {
         if (finished) return;
@@ -334,9 +320,7 @@ function checkKeychain() {
             "Keychain API detected, but the handshake did not return. " +
             `${detected.name} · Custom JSON=YES.`
           );
-        }
-
-        else {
+        } else {
           setKeychainButton(
             "Handshake no response"
           );
@@ -366,9 +350,7 @@ function checkKeychain() {
           "Keychain API detected. " +
           "Handshake produced an error, but Custom JSON=YES."
         );
-      }
-
-      else {
+      } else {
         setKeychainButton(
           "Keychain error ✕"
         );
@@ -393,18 +375,31 @@ function checkKeychain() {
  * KEYCHAIN BUTTONS
  */
 
-$("handshakeBtn").onclick =
-  checkKeychain;
+const handshakeButton =
+  $("handshakeBtn");
+
+if (handshakeButton) {
+  handshakeButton.type = "button";
+  handshakeButton.onclick =
+    checkKeychain;
+}
 
 
-$("connectBtn").onclick = () => {
-  location.hash = "join";
+const connectButton =
+  $("connectBtn");
 
-  setTimeout(
-    checkKeychain,
-    300
-  );
-};
+if (connectButton) {
+  connectButton.type = "button";
+
+  connectButton.onclick = () => {
+    location.hash = "join";
+
+    setTimeout(
+      () => checkKeychain(),
+      300
+    );
+  };
+}
 
 
 /*
@@ -466,14 +461,10 @@ function updatePublishButton() {
   if (publishing) {
     $("publishBtn").textContent =
       "Waiting for Keychain…";
-  }
-
-  else if (ready) {
+  } else if (ready) {
     $("publishBtn").textContent =
       "Publish to Hive";
-  }
-
-  else {
+  } else {
     $("publishBtn").textContent =
       "Complete the steps above to publish";
   }
@@ -904,9 +895,7 @@ function findBestMatch(
     best.score = 1000;
     best.type =
       "exact locality";
-  }
-
-  else if (
+  } else if (
     normalizedCity.startsWith(q)
   ) {
     best.score = 900;
@@ -935,15 +924,11 @@ function findBestMatch(
       score = 850;
       type =
         "matching name";
-    }
-
-    else if (
+    } else if (
       n.startsWith(q)
     ) {
       score = 750;
-    }
-
-    else if (
+    } else if (
       n.includes(q)
     ) {
       score = 650;
@@ -1566,7 +1551,16 @@ $("publishBtn").onclick =
             response.success
           ) {
             setStatus(
-              "Census declaration published successfully."
+              "Census declaration published successfully. Reloading Census map…"
+            );
+
+            /*
+             * Give the RPC node a moment to expose
+             * the newly included operation.
+             */
+            setTimeout(
+              loadCensusMap,
+              3500
             );
 
             return;
@@ -1582,17 +1576,13 @@ $("publishBtn").onclick =
             ) {
               error =
                 response.message;
-            }
-
-            else if (
+            } else if (
               typeof response.error ===
               "string"
             ) {
               error =
                 response.error;
-            }
-
-            else if (
+            } else if (
               response.error
             ) {
               try {
@@ -1640,6 +1630,693 @@ $("publishBtn").onclick =
 
 
 /*
+ * ============================================================
+ * HIVE CENSUS READER
+ * ============================================================
+ *
+ * v0.5.0:
+ *
+ * Reads custom_json operations directly from Hive.
+ *
+ * The account list is temporary.
+ * Location data is NOT stored in this application.
+ */
+
+
+/*
+ * HIVE JSON-RPC
+ */
+
+async function hiveRpc(
+  method,
+  params
+) {
+  const response =
+    await fetch(
+      HIVE_RPC,
+      {
+        method:
+          "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
+
+        body:
+          JSON.stringify({
+            jsonrpc:
+              "2.0",
+
+            method,
+
+            params,
+
+            id:
+              1
+          })
+      }
+    );
+
+  if (!response.ok) {
+    throw new Error(
+      `Hive RPC HTTP ${response.status}`
+    );
+  }
+
+  const data =
+    await response.json();
+
+  if (data.error) {
+    throw new Error(
+      data.error.message ||
+      JSON.stringify(
+        data.error
+      )
+    );
+  }
+
+  return data.result;
+}
+
+
+/*
+ * ACCOUNT HISTORY
+ *
+ * 262144 = custom_json operation filter.
+ */
+
+async function getHiveCustomJsonHistory(
+  account
+) {
+  const result =
+    await hiveRpc(
+      "account_history_api.get_account_history",
+      {
+        account,
+
+        start:
+          -1,
+
+        limit:
+          1000,
+
+        include_reversible:
+          true,
+
+        operation_filter_low:
+          262144
+      }
+    );
+
+  if (
+    !result ||
+    !Array.isArray(
+      result.history
+    )
+  ) {
+    return [];
+  }
+
+  return result.history;
+}
+
+
+/*
+ * NORMALIZE OPERATION FORMAT
+ *
+ * Hive nodes/API layers can expose an operation
+ * either in the traditional array form:
+ *
+ * ["custom_json", {...}]
+ *
+ * or AppBase form:
+ *
+ * {
+ *   type: "custom_json_operation",
+ *   value: {...}
+ * }
+ */
+
+function normalizeHiveOperation(
+  op
+) {
+  if (
+    Array.isArray(op) &&
+    op.length >= 2
+  ) {
+    return {
+      type:
+        op[0],
+
+      value:
+        op[1]
+    };
+  }
+
+  if (
+    op &&
+    typeof op === "object" &&
+    typeof op.type === "string" &&
+    op.value &&
+    typeof op.value === "object"
+  ) {
+    return {
+      type:
+        op.type.replace(
+          /_operation$/,
+          ""
+        ),
+
+      value:
+        op.value
+    };
+  }
+
+  return null;
+}
+
+
+/*
+ * VERIFY THAT THE ACCOUNT ACTUALLY AUTHORIZED
+ * THE CUSTOM_JSON.
+ */
+
+function operationSignedByAccount(
+  value,
+  account
+) {
+  const posting =
+    Array.isArray(
+      value.required_posting_auths
+    )
+      ? value.required_posting_auths
+      : [];
+
+  const active =
+    Array.isArray(
+      value.required_auths
+    )
+      ? value.required_auths
+      : [];
+
+  return (
+    posting.includes(
+      account
+    ) ||
+    active.includes(
+      account
+    )
+  );
+}
+
+
+/*
+ * PARSE JSON SAFELY
+ */
+
+function parseCustomJson(
+  json
+) {
+  if (
+    typeof json === "object" &&
+    json !== null
+  ) {
+    return json;
+  }
+
+  if (
+    typeof json !== "string"
+  ) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(
+      json
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+
+/*
+ * VALIDATE PROTOCOL v1 SET
+ */
+
+function validCensusSet(
+  payload
+) {
+  if (
+    !payload ||
+    typeof payload !== "object"
+  ) {
+    return false;
+  }
+
+  if (
+    payload.v !== 1 ||
+    payload.action !== "set"
+  ) {
+    return false;
+  }
+
+  if (
+    typeof payload.country !== "string" ||
+    !/^[A-Z]{2}$/.test(
+      payload.country
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    typeof payload.country_name !== "string" ||
+    !payload.country_name.trim()
+  ) {
+    return false;
+  }
+
+  if (
+    payload.region !== null &&
+    typeof payload.region !== "string"
+  ) {
+    return false;
+  }
+
+  if (
+    payload.region_name !== null &&
+    typeof payload.region_name !== "string"
+  ) {
+    return false;
+  }
+
+  if (
+    typeof payload.city !== "string" ||
+    !payload.city.trim()
+  ) {
+    return false;
+  }
+
+  if (
+    typeof payload.lat !== "number" ||
+    !Number.isFinite(
+      payload.lat
+    ) ||
+    payload.lat < -90 ||
+    payload.lat > 90
+  ) {
+    return false;
+  }
+
+  if (
+    typeof payload.lon !== "number" ||
+    !Number.isFinite(
+      payload.lon
+    ) ||
+    payload.lon < -180 ||
+    payload.lon > 180
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+
+/*
+ * VALIDATE PROTOCOL v1 UNSET
+ */
+
+function validCensusUnset(
+  payload
+) {
+  return (
+    payload &&
+    typeof payload === "object" &&
+    payload.v === 1 &&
+    payload.action === "unset"
+  );
+}
+
+
+/*
+ * FIND CURRENT CENSUS STATE
+ *
+ * History sequence number is used to establish
+ * operation order.
+ *
+ * Latest VALID Hive Census operation wins.
+ *
+ * Invalid operations are ignored.
+ */
+
+async function getCurrentCensusState(
+  account
+) {
+  const history =
+    await getHiveCustomJsonHistory(
+      account
+    );
+
+  /*
+   * Sort newest -> oldest explicitly.
+   */
+  const newestFirst =
+    [...history].sort(
+      (a, b) =>
+        Number(b[0]) -
+        Number(a[0])
+    );
+
+  for (
+    const item
+    of newestFirst
+  ) {
+    if (
+      !Array.isArray(item) ||
+      item.length < 2
+    ) {
+      continue;
+    }
+
+    const historyNumber =
+      item[0];
+
+    const record =
+      item[1];
+
+    if (
+      !record ||
+      !record.op
+    ) {
+      continue;
+    }
+
+    const operation =
+      normalizeHiveOperation(
+        record.op
+      );
+
+    if (!operation) {
+      continue;
+    }
+
+    if (
+      operation.type !==
+      "custom_json"
+    ) {
+      continue;
+    }
+
+    const value =
+      operation.value;
+
+    if (
+      !value ||
+      value.id !==
+        CUSTOM_JSON_ID
+    ) {
+      continue;
+    }
+
+    if (
+      !operationSignedByAccount(
+        value,
+        account
+      )
+    ) {
+      continue;
+    }
+
+    const payload =
+      parseCustomJson(
+        value.json
+      );
+
+    if (!payload) {
+      continue;
+    }
+
+    /*
+     * Unknown protocol versions are ignored
+     * by the v1 reader.
+     */
+    if (
+      payload.v !==
+      PROTOCOL_VERSION
+    ) {
+      continue;
+    }
+
+    if (
+      validCensusUnset(
+        payload
+      )
+    ) {
+      return {
+        account,
+        active:
+          false,
+
+        action:
+          "unset",
+
+        historyNumber,
+
+        block:
+          record.block || null,
+
+        transactionId:
+          record.trx_id || null,
+
+        timestamp:
+          record.timestamp || null
+      };
+    }
+
+    if (
+      validCensusSet(
+        payload
+      )
+    ) {
+      return {
+        account,
+        active:
+          true,
+
+        action:
+          "set",
+
+        payload,
+
+        historyNumber,
+
+        block:
+          record.block || null,
+
+        transactionId:
+          record.trx_id || null,
+
+        timestamp:
+          record.timestamp || null
+      };
+    }
+
+    /*
+     * Invalid hive_census operation:
+     * ignore it and continue looking backwards
+     * for the latest VALID operation.
+     */
+  }
+
+  return null;
+}
+
+
+/*
+ * REMOVE EXISTING CENSUS MARKERS
+ */
+
+function clearCensusMarkers() {
+  for (
+    const marker
+    of censusMarkers
+  ) {
+    map.removeLayer(
+      marker
+    );
+  }
+
+  censusMarkers = [];
+}
+
+
+/*
+ * CREATE CENSUS MARKER
+ */
+
+function addCensusMarker(
+  state
+) {
+  if (
+    !state ||
+    !state.active ||
+    !state.payload
+  ) {
+    return null;
+  }
+
+  const p =
+    state.payload;
+
+  const locationParts = [
+    p.city,
+    p.region_name,
+    p.country_name
+  ].filter(Boolean);
+
+  const popup =
+    `<strong>@${escapeHtml(
+      state.account
+    )}</strong>` +
+    `<br>` +
+    `${escapeHtml(
+      locationParts.join(", ")
+    )}` +
+    `<br>` +
+    `<span style="opacity:.7;font-size:.85em">` +
+    `Hive Census · protocol v${PROTOCOL_VERSION}` +
+    `</span>`;
+
+  const marker =
+    L.marker([
+      p.lat,
+      p.lon
+    ])
+      .addTo(map)
+      .bindPopup(
+        popup
+      );
+
+  censusMarkers.push(
+    marker
+  );
+
+  return marker;
+}
+
+
+/*
+ * LOAD CURRENT CENSUS MAP
+ */
+
+async function loadCensusMap() {
+  console.log(
+    `Hive Census v${CENSUS_VERSION}: loading Census state from Hive…`
+  );
+
+  clearCensusMarkers();
+
+  const activeStates = [];
+
+  for (
+    const account
+    of CENSUS_TEST_ACCOUNTS
+  ) {
+    try {
+      console.log(
+        `Hive Census: reading @${account}`
+      );
+
+      const state =
+        await getCurrentCensusState(
+          account
+        );
+
+      console.log(
+        `Hive Census state for @${account}:`,
+        state
+      );
+
+      if (
+        state &&
+        state.active
+      ) {
+        activeStates.push(
+          state
+        );
+
+        addCensusMarker(
+          state
+        );
+      }
+
+    } catch (error) {
+      console.error(
+        `Hive Census: failed to read @${account}:`,
+        error
+      );
+    }
+  }
+
+  /*
+   * For the first Census record, zoom directly
+   * to the blockchain-derived location.
+   *
+   * With multiple records, fit all markers.
+   */
+
+  if (
+    activeStates.length === 1
+  ) {
+    const p =
+      activeStates[0].payload;
+
+    map.setView(
+      [
+        p.lat,
+        p.lon
+      ],
+      7
+    );
+  }
+
+  else if (
+    activeStates.length > 1
+  ) {
+    const bounds =
+      L.latLngBounds(
+        activeStates.map(
+          state => [
+            state.payload.lat,
+            state.payload.lon
+          ]
+        )
+      );
+
+    map.fitBounds(
+      bounds,
+      {
+        padding:
+          [40, 40],
+
+        maxZoom:
+          8
+      }
+    );
+  }
+
+  console.log(
+    `Hive Census: ${activeStates.length} active Census declaration(s) loaded.`
+  );
+
+  return activeStates;
+}
+
+
+/*
  * HTML SAFETY
  */
 
@@ -1679,7 +2356,8 @@ const map =
 L.tileLayer(
   "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
   {
-    maxZoom: 19,
+    maxZoom:
+      19,
 
     attribution:
       '&copy; OpenStreetMap contributors'
@@ -1691,4 +2369,20 @@ L.tileLayer(
  * INITIAL STATE
  */
 
+if (handshakeButton) {
+  handshakeButton.textContent =
+    "Check Keychain";
+}
+
 updatePublishButton();
+
+console.log(
+  `Hive Census app.js v${CENSUS_VERSION} loaded`
+);
+
+
+/*
+ * LOAD BLOCKCHAIN-DERIVED CENSUS DATA
+ */
+
+loadCensusMap();
