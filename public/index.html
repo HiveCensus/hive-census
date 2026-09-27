@@ -5,129 +5,513 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#0b0d10">
   <meta name="description" content="Hive Census — an open, on-chain map of the Hive community.">
+
   <title>Hive Census — Where in the world is Hive?</title>
+
   <link rel="icon" href="/assets/hive-logo.png">
+
   <link rel="preconnect" href="https://unpkg.com">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  >
+
   <link rel="stylesheet" href="/styles.css">
 </head>
+
 <body>
+
 <header class="topbar">
-  <a class="brand" href="#top" aria-label="Hive Census home">
-    <img src="/assets/hive-logo.png" alt="">
-    <span><strong>HIVE</strong> CENSUS</span>
+
+  <a
+    class="brand"
+    href="#top"
+    aria-label="Hive Census home"
+  >
+    <img
+      src="/assets/hive-logo.png"
+      alt=""
+    >
+
+    <span>
+      <strong>HIVE</strong> CENSUS
+    </span>
   </a>
-  <nav><a href="#map">Map</a><a href="#join">Join Census</a><a href="#about">About</a></nav>
-  <button id="connectBtn" class="btn btn-red">Connect Keychain</button>
+
+  <nav>
+    <a href="#map">Map</a>
+    <a href="#join">Join Census</a>
+    <a href="#about">About</a>
+  </nav>
+
+  <button
+    id="connectBtn"
+    class="btn btn-red"
+  >
+    Connect Keychain
+  </button>
+
 </header>
 
+
 <main id="top">
+
+  <!-- HERO -->
+
   <section class="hero">
+
     <div class="hero-copy">
-      <div class="kicker"><span></span> OPEN · ON-CHAIN · COMMUNITY-BUILT</div>
-      <h1>Where in the world<br>is <b>Hive?</b></h1>
-      <p>Hive Census is a public map built from location declarations signed by Hive accounts and stored on the Hive blockchain.</p>
+
+      <div class="kicker">
+        <span></span>
+        OPEN · ON-CHAIN · COMMUNITY-BUILT
+      </div>
+
+      <h1>
+        Where in the world<br>
+        is <b>Hive?</b>
+      </h1>
+
+      <p>
+        Hive Census is a public map built from location
+        declarations signed by Hive accounts and stored
+        on the Hive blockchain.
+      </p>
+
       <div class="hero-actions">
-        <a class="btn btn-red" href="#join">Add my location</a>
-        <a class="btn btn-ghost" href="#map">Explore the map</a>
+
+        <a
+          class="btn btn-red"
+          href="#join"
+        >
+          Add my location
+        </a>
+
+        <a
+          class="btn btn-ghost"
+          href="#map"
+        >
+          Explore the map
+        </a>
+
       </div>
+
       <div class="trust">
-        <span>✓ No GPS required</span><span>✓ No separate account</span><span>✓ Posting authority only</span>
+        <span>✓ No GPS required</span>
+        <span>✓ No separate account</span>
+        <span>✓ Posting authority only</span>
       </div>
+
     </div>
-    <div class="hero-visual" aria-hidden="true">
-      <div class="orbit orbit-a"></div><div class="orbit orbit-b"></div>
-      <img src="/assets/hive-logo.png" alt="">
-      <div class="hero-word">CENSUS</div>
+
+
+    <div
+      class="hero-visual"
+      aria-hidden="true"
+    >
+
+      <div class="orbit orbit-a"></div>
+      <div class="orbit orbit-b"></div>
+
+      <img
+        src="/assets/hive-logo.png"
+        alt=""
+      >
+
+      <div class="hero-word">
+        CENSUS
+      </div>
+
     </div>
+
   </section>
 
-  <section id="map" class="section">
+
+  <!-- MAP -->
+
+  <section
+    id="map"
+    class="section"
+  >
+
     <div class="section-title">
-      <div><div class="kicker"><span></span> THE MAP</div><h2>Explore the Hive community</h2></div>
-      <div class="badge">MVP · live Census index coming next</div>
+
+      <div>
+
+        <div class="kicker">
+          <span></span>
+          THE MAP
+        </div>
+
+        <h2>
+          Explore the Hive community
+        </h2>
+
+      </div>
+
+      <div class="badge">
+        MVP · live Census index coming next
+      </div>
+
     </div>
+
+
     <div class="map-shell">
+
       <div id="mapCanvas"></div>
+
       <div class="map-overlay">
-  <strong>Hive around the world</strong>
-  <span>Community locations declared by Hive users.</span>
-      </div> 
+
+        <strong>
+          Hive around the world
+        </strong>
+
+        <span>
+          Community locations declared by Hive users.
+        </span>
+
+      </div>
+
     </div>
+
   </section>
 
-  <section id="join" class="section">
+
+  <!-- JOIN CENSUS -->
+
+  <section
+    id="join"
+    class="section"
+  >
+
     <div class="section-title">
-      <div><div class="kicker"><span></span> JOIN CENSUS</div><h2>Put your place on the map</h2></div>
+
+      <div>
+
+        <div class="kicker">
+          <span></span>
+          JOIN CENSUS
+        </div>
+
+        <h2>
+          Put your place on the map
+        </h2>
+
+      </div>
+
     </div>
+
+
+    <!-- STEPS -->
 
     <div class="steps">
-      <div class="step active"><i>1</i><span>Connect</span></div>
-      <div class="line"></div>
-      <div class="step"><i>2</i><span>Location</span></div>
-      <div class="line"></div>
-      <div class="step"><i>3</i><span>Review</span></div>
-      <div class="line"></div>
-      <div class="step"><i>4</i><span>Publish</span></div>
-    </div>
 
-    <div class="join-grid">
-      <div class="card form-card">
-        <h3>1. Connect your Hive account</h3>
-        <p class="muted">Enter the Hive account that will sign the Census declaration.</p>
-        <label for="account">Hive username</label>
-        <div class="field-row">
-          <div class="account-field"><span>@</span><input id="account" placeholder="username" autocomplete="off"></div>
-          <button id="handshakeBtn" class="btn btn-dark">Check Keychain</button>
-        </div>
-
-        <hr>
-        <h3>2. Choose your city or town</h3>
-        <p class="muted">Search for a locality. Census uses its public centre point — not your home address or device GPS.</p>
-        <label for="placeQuery">Location</label>
-        <div class="field-row">
-          <input id="placeQuery" placeholder="e.g. Katowice, Poland">
-        </div>
-        <div id="results" class="results"></div>
-        <div id="selection" class="selection hidden"></div>
-
-        <div class="warning">
-          <strong>Permanent public record</strong>
-          <p>Hive is an immutable public blockchain. A published Census declaration cannot truly be deleted. A later <code>unset</code> can make it inactive in Census clients, but the historical operation remains public.</p>
-        </div>
-        <label class="ack"><input id="permanentAck" type="checkbox"><span>I understand that the selected location and my Hive account will be permanently associated in the public blockchain history.</span></label>
-
-        <button id="publishBtn" class="btn btn-red publish" disabled>Publishing disabled until Protocol v1.0 is frozen</button>
-        <div id="status" class="status"></div>
+      <div class="step active">
+        <i>1</i>
+        <span>Connect</span>
       </div>
 
-      <aside class="card review-card">
-        <div class="review-head"><div><span class="mini">REVIEW</span><h3>On-chain declaration</h3></div><span class="draft">PROTOCOL DRAFT</span></div>
-        <pre id="jsonPreview">Choose a location to preview the exact data that will be signed.</pre>
-        <dl>
-          <div><dt>Operation ID</dt><dd><code>hive_census</code></dd></div>
-          <div><dt>Authority</dt><dd>Posting</dd></div>
-          <div><dt>Protocol</dt><dd>v1 draft</dd></div>
-          <div><dt>Private key</dt><dd>Never shared with this site</dd></div>
-        </dl>
-        <p class="fine">Hive Keychain will show the operation for approval when publishing is enabled.</p>
-      </aside>
+      <div class="line"></div>
+
+      <div class="step">
+        <i>2</i>
+        <span>Location</span>
+      </div>
+
+      <div class="line"></div>
+
+      <div class="step">
+        <i>3</i>
+        <span>Review</span>
+      </div>
+
+      <div class="line"></div>
+
+      <div class="step">
+        <i>4</i>
+        <span>Publish</span>
+      </div>
+
     </div>
+
+
+    <div class="join-grid">
+
+
+      <!-- FORM -->
+
+      <div class="card form-card">
+
+        <h3>
+          1. Connect your Hive account
+        </h3>
+
+        <p class="muted">
+          Enter the Hive account that will sign
+          the Census declaration.
+        </p>
+
+        <label for="account">
+          Hive username
+        </label>
+
+
+        <div class="field-row">
+
+          <div class="account-field">
+
+            <span>@</span>
+
+            <input
+              id="account"
+              placeholder="username"
+              autocomplete="off"
+            >
+
+          </div>
+
+          <button
+            id="handshakeBtn"
+            class="btn btn-dark"
+          >
+            Check Keychain
+          </button>
+
+        </div>
+
+
+        <hr>
+
+
+        <!-- LOCATION -->
+
+        <h3>
+          2. Choose your city or town
+        </h3>
+
+        <p class="muted">
+          Start typing a locality. Search also supports
+          alternative, local and historical place names.
+          Census uses the public centre point of the
+          selected locality — not your home address
+          or device GPS.
+        </p>
+
+
+        <label for="placeQuery">
+          Location
+        </label>
+
+
+        <div class="field-row">
+
+          <input
+            id="placeQuery"
+            placeholder="e.g. Katowice, Poland"
+            autocomplete="off"
+          >
+
+        </div>
+
+
+        <div
+          id="results"
+          class="results"
+        ></div>
+
+
+        <div
+          id="selection"
+          class="selection hidden"
+        ></div>
+
+
+        <!-- PRIVACY WARNING -->
+
+        <div class="warning">
+
+          <strong>
+            Permanent public record
+          </strong>
+
+          <p>
+            Hive is an immutable public blockchain.
+            A published Census declaration cannot
+            truly be deleted.
+
+            A later <code>unset</code> can make it
+            inactive in Census clients, but the
+            historical operation remains public.
+          </p>
+
+        </div>
+
+
+        <label class="ack">
+
+          <input
+            id="permanentAck"
+            type="checkbox"
+          >
+
+          <span>
+            I understand that the selected location
+            and my Hive account will be permanently
+            associated in the public blockchain history.
+          </span>
+
+        </label>
+
+
+        <button
+          id="publishBtn"
+          class="btn btn-red publish"
+          disabled
+        >
+          Publishing disabled during v0.3.1 testing
+        </button>
+
+
+        <div
+          id="status"
+          class="status"
+        ></div>
+
+      </div>
+
+
+      <!-- REVIEW -->
+
+      <aside class="card review-card">
+
+        <div class="review-head">
+
+          <div>
+
+            <span class="mini">
+              REVIEW
+            </span>
+
+            <h3>
+              On-chain declaration
+            </h3>
+
+          </div>
+
+          <span class="draft">
+            PROTOCOL v1.0
+          </span>
+
+        </div>
+
+
+        <pre id="jsonPreview">Choose a location to preview the exact data that will be signed.</pre>
+
+
+        <dl>
+
+          <div>
+            <dt>Operation ID</dt>
+            <dd>
+              <code>hive_census</code>
+            </dd>
+          </div>
+
+          <div>
+            <dt>Authority</dt>
+            <dd>Posting</dd>
+          </div>
+
+          <div>
+            <dt>Protocol</dt>
+            <dd>v1.0</dd>
+          </div>
+
+          <div>
+            <dt>Private key</dt>
+            <dd>
+              Never shared with this site
+            </dd>
+          </div>
+
+        </dl>
+
+
+        <p class="fine">
+          Hive Keychain will show the operation
+          for approval when publishing is enabled.
+        </p>
+
+      </aside>
+
+    </div>
+
   </section>
 
-  <section id="about" class="manifesto">
-    <img src="/assets/hive-logo.png" alt="">
+
+  <!-- ABOUT -->
+
+  <section
+    id="about"
+    class="manifesto"
+  >
+
+    <img
+      src="/assets/hive-logo.png"
+      alt=""
+    >
+
     <div>
-      <div class="kicker"><span></span> WHY ON-CHAIN?</div>
-      <h2>The website is an interface.<br>The blockchain is the record.</h2>
-      <p>Hive Census is designed as an open protocol. If this website disappears, another client can read compatible <code>hive_census</code> operations and reconstruct the Census without our database or permission.</p>
+
+      <div class="kicker">
+        <span></span>
+        WHY ON-CHAIN?
+      </div>
+
+      <h2>
+        The website is an interface.<br>
+        The blockchain is the record.
+      </h2>
+
+      <p>
+        Hive Census is designed as an open protocol.
+        If this website disappears, another client
+        can read compatible
+        <code>hive_census</code> operations and
+        reconstruct the Census without our database
+        or permission.
+      </p>
+
     </div>
+
   </section>
+
 </main>
 
-<footer><span>Hive Census</span><span>Experimental MVP · v0.2</span><span>Built on Hive</span></footer>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<footer>
+
+  <span>
+    Hive Census
+  </span>
+
+  <span>
+    Experimental MVP · v0.3.1
+  </span>
+
+  <span>
+    Built on Hive
+  </span>
+
+</footer>
+
+
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+></script>
+
 <script src="/app.js"></script>
+
 </body>
 </html>
