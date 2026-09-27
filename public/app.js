@@ -64,7 +64,7 @@ async function searchPlaces() {
       "?format=jsonv2" +
       "&addressdetails=1" +
       "&namedetails=1" +
-      "&limit=8" +
+      "&limit=10" +
       "&q=" +
       encodeURIComponent(q);
 
@@ -82,9 +82,16 @@ async function searchPlaces() {
 
     $("results").innerHTML = "";
 
-    const places = data
-      .map(normalizePlace)
-      .filter(place => place !== null);
+    /*
+     * Normalize Nominatim results and then remove
+     * duplicate representations of the same locality.
+     */
+
+    const places = deduplicatePlaces(
+      data
+        .map(normalizePlace)
+        .filter(place => place !== null)
+    );
 
     places.forEach(place => {
       const div = document.createElement("div");
@@ -119,9 +126,38 @@ async function searchPlaces() {
 
 
 /*
+ * REMOVE DUPLICATE LOCALITIES
+ *
+ * Nominatim can return multiple OSM objects that
+ * represent the same city or town.
+ *
+ * Hive Census should show one choice for the same
+ * locality / region / country combination.
+ */
+
+function deduplicatePlaces(places) {
+  const unique = new Map();
+
+  for (const place of places) {
+    const key = [
+      place.city.toLocaleLowerCase(),
+      place.region || place.regionName || "",
+      place.country
+    ].join("|");
+
+    if (!unique.has(key)) {
+      unique.set(key, place);
+    }
+  }
+
+  return [...unique.values()];
+}
+
+
+/*
  * NORMALIZE GEOCODER RESULT
  *
- * Converts Nominatim data into the fields used by
+ * Converts Nominatim data into fields used by
  * Hive Census Protocol v1.0.
  */
 
@@ -146,45 +182,44 @@ function normalizePlace(p) {
       : null;
 
   /*
-   * Census requires a locality.
-   *
-   * Search results that cannot provide a locality
-   * and country are not offered for selection.
+   * Census requires a locality and country.
    */
 
   if (!city || !countryName || !countryCode) {
     return null;
   }
 
+
   /*
-   * Human-readable administrative region.
+   * Human-readable first-level administrative region.
    *
-   * We prefer "state", which for Poland produces
-   * values such as "Silesian Voivodeship".
+   * For Poland this should resolve to:
+   *
+   * Silesian Voivodeship
+   *
+   * We deliberately do NOT fall back to county or
+   * state_district here. Those can represent lower
+   * administrative structures such as Metropolis GZM.
    */
 
   const regionName =
     a.state ||
-    a.region ||
     a.province ||
-    a.state_district ||
-    a.county ||
+    a.region ||
     null;
 
+
   /*
-   * Nominatim may expose ISO 3166-2 codes under
-   * different administrative levels, for example:
+   * Find ISO 3166-2 subdivision code.
    *
-   * ISO3166-2-lvl4
-   * ISO3166-2-lvl5
-   * ISO3166-2-lvl6
+   * Example:
    *
-   * We inspect all such fields instead of assuming
-   * that every country uses the same admin level.
+   * PL-24 = Silesian Voivodeship
    */
 
   const regionCode =
     findSubdivisionCode(a, countryCode);
+
 
   const lat = Number(p.lat);
   const lon = Number(p.lon);
@@ -200,20 +235,30 @@ function normalizePlace(p) {
     return null;
   }
 
+
+  /*
+   * User-facing locality name.
+   */
+
   const displayParts = [
     city,
     regionName,
     countryName
   ].filter(Boolean);
 
+
   return {
     city,
+
     country: countryCode,
     countryName,
+
     region: regionCode,
     regionName,
+
     lat,
     lon,
+
     displayLabel: displayParts.join(", ")
   };
 }
@@ -238,14 +283,15 @@ function findSubdivisionCode(address, countryCode) {
     }
   }
 
+
   /*
-   * Only accept a subdivision belonging to the
-   * selected country.
+   * Only accept subdivisions belonging to
+   * the selected country.
    *
    * Example:
    *
-   * country = PL
-   * subdivision = PL-24
+   * country: PL
+   * subdivision: PL-24
    */
 
   const valid = candidates.filter(candidate =>
@@ -256,17 +302,20 @@ function findSubdivisionCode(address, countryCode) {
     return null;
   }
 
+
   /*
    * Prefer the highest-level administrative
-   * subdivision available.
+   * subdivision supplied by Nominatim.
    *
-   * Lower lvl number generally represents a
-   * higher administrative level in Nominatim.
+   * A lower lvl number normally represents
+   * a higher administrative level.
    */
 
   valid.sort((a, b) => {
-    return extractAdminLevel(a.key) -
-           extractAdminLevel(b.key);
+    return (
+      extractAdminLevel(a.key) -
+      extractAdminLevel(b.key)
+    );
   });
 
   return valid[0].value;
@@ -293,21 +342,27 @@ function choosePlace(place) {
 
   $("selection").classList.remove("hidden");
 
+  const locationParts = [
+    place.city,
+    place.regionName,
+    place.countryName
+  ].filter(Boolean);
+
   $("selection").innerHTML =
-    `<strong>${escapeHtml(place.city)}</strong>` +
+    `<strong>${escapeHtml(locationParts.join(", "))}</strong>` +
     `<br>` +
     `<span class="muted">` +
-    `${escapeHtml(place.regionName || "No region")} · ` +
-    `${escapeHtml(place.countryName)} · ` +
     `${place.lat.toFixed(4)}, ${place.lon.toFixed(4)}` +
     `</span>`;
 
+
   /*
-   * Display exact Protocol v1 payload.
+   * Display exact Protocol v1.0 payload.
    */
 
   $("jsonPreview").textContent =
     JSON.stringify(censusPayload(), null, 2);
+
 
   /*
    * Update map.
@@ -327,7 +382,9 @@ function choosePlace(place) {
     place.lon
   ])
     .addTo(map)
-    .bindPopup(escapeHtml(place.displayLabel))
+    .bindPopup(
+      escapeHtml(place.displayLabel)
+    )
     .openPopup();
 }
 
