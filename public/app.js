@@ -5,6 +5,16 @@ let selectedMarker = null;
 let searchTimer = null;
 let searchController = null;
 let lastSearch = "";
+let publishing = false;
+
+
+/*
+ * CONFIG
+ */
+
+const CENSUS_VERSION = "0.4.0";
+const PROTOCOL_VERSION = 1;
+const CUSTOM_JSON_ID = "hive_census";
 
 
 /*
@@ -16,9 +26,19 @@ function setStatus(msg, bad = false) {
   $("status").style.color = bad ? "#ff7288" : "#9da8b4";
 }
 
+
+/*
+ * KEYCHAIN
+ */
+
 function keychain() {
-  return window.hive_keychain || null;
+  /*
+   * Hive Keychain traditionally exposes window.hive_keychain.
+   * Some compatible implementations expose window.hive.
+   */
+  return window.hive_keychain || window.hive || null;
 }
+
 
 function checkKeychain() {
   const kc = keychain();
@@ -31,10 +51,19 @@ function checkKeychain() {
     return;
   }
 
+  if (typeof kc.requestHandshake !== "function") {
+    setStatus(
+      "A compatible Hive signing API was detected, but Keychain handshake is unavailable.",
+      true
+    );
+    return;
+  }
+
   kc.requestHandshake(() => {
     setStatus("Hive Keychain detected.");
   });
 }
+
 
 $("handshakeBtn").onclick = checkKeychain;
 
@@ -45,22 +74,76 @@ $("connectBtn").onclick = () => {
 
 
 /*
- * LIVE SEARCH
- *
- * Search starts after 3 characters.
- * A 500 ms debounce prevents unnecessary requests.
+ * ACCOUNT
+ */
+
+function getAccount() {
+  return $("account")
+    .value
+    .trim()
+    .replace(/^@/, "")
+    .toLowerCase();
+}
+
+
+function validHiveAccountName(account) {
+  /*
+   * Conservative client-side validation.
+   * Blockchain/Keychain remains authoritative.
+   */
+  return /^[a-z][a-z0-9.-]{2,15}$/.test(account);
+}
+
+
+$("account").addEventListener("input", () => {
+  updatePublishButton();
+});
+
+
+/*
+ * PERMANENCE ACKNOWLEDGEMENT
+ */
+
+$("permanentAck").addEventListener("change", () => {
+  updatePublishButton();
+});
+
+
+/*
+ * PUBLISH BUTTON STATE
+ */
+
+function updatePublishButton() {
+  const account = getAccount();
+  const acknowledged = $("permanentAck").checked;
+
+  const ready =
+    !publishing &&
+    selected !== null &&
+    validHiveAccountName(account) &&
+    acknowledged;
+
+  $("publishBtn").disabled = !ready;
+
+  if (publishing) {
+    $("publishBtn").textContent = "Waiting for Keychain…";
+  } else if (ready) {
+    $("publishBtn").textContent = "Publish to Hive";
+  } else {
+    $("publishBtn").textContent =
+      "Complete the steps above to publish";
+  }
+}
+
+
+/*
+ * LIVE LOCATION SEARCH
  */
 
 $("placeQuery").addEventListener("input", () => {
   const q = $("placeQuery").value.trim();
 
   clearTimeout(searchTimer);
-
-  /*
-   * Starting another search invalidates the
-   * previously selected locality.
-   */
-
   clearSelection();
 
   if (q.length < 3) {
@@ -76,10 +159,6 @@ $("placeQuery").addEventListener("input", () => {
   }, 500);
 });
 
-
-/*
- * Enter forces an immediate search.
- */
 
 $("placeQuery").addEventListener("keydown", e => {
   if (e.key !== "Enter") {
@@ -110,11 +189,6 @@ async function searchPlaces(query) {
   }
 
   lastSearch = q;
-
-  /*
-   * Cancel an older request if the user has
-   * already started another search.
-   */
 
   if (searchController) {
     searchController.abort();
@@ -149,11 +223,6 @@ async function searchPlaces(query) {
 
     const data = await res.json();
 
-    /*
-     * Ignore this response if another search
-     * has already started.
-     */
-
     if (lastSearch !== q) {
       return;
     }
@@ -163,20 +232,6 @@ async function searchPlaces(query) {
       .filter(place => place !== null);
 
     places = deduplicatePlaces(places);
-
-    /*
-     * Rank results instead of aggressively
-     * filtering them.
-     *
-     * This preserves useful searches based on:
-     *
-     * - alternative names;
-     * - historical names;
-     * - neighbourhood names;
-     * - local names;
-     * - transliterations;
-     * - multilingual names.
-     */
 
     places.sort((a, b) => {
       if (b.score !== a.score) {
@@ -212,11 +267,6 @@ async function searchPlaces(query) {
 function normalizePlace(p, query) {
   const a = p.address || {};
 
-  /*
-   * Census stores a locality, not a neighbourhood
-   * or street address.
-   */
-
   const city =
     a.city ||
     a.town ||
@@ -226,8 +276,7 @@ function normalizePlace(p, query) {
     null;
 
   const countryName =
-    a.country ||
-    null;
+    a.country || null;
 
   const countryCode =
     a.country_code
@@ -238,25 +287,14 @@ function normalizePlace(p, query) {
     return null;
   }
 
-
-  /*
-   * Human-readable administrative region.
-   */
-
   const regionName =
     a.state ||
     a.province ||
     a.region ||
     null;
 
-
-  /*
-   * ISO 3166-2 subdivision.
-   */
-
   const regionCode =
     findSubdivisionCode(a, countryCode);
-
 
   const lat = Number(p.lat);
   const lon = Number(p.lon);
@@ -272,12 +310,6 @@ function normalizePlace(p, query) {
     return null;
   }
 
-
-  /*
-   * Collect names that may explain why the
-   * geocoder returned this result.
-   */
-
   const searchNames =
     collectSearchNames(p, city);
 
@@ -288,13 +320,11 @@ function normalizePlace(p, query) {
       searchNames
     );
 
-
   const displayParts = [
     city,
     regionName,
     countryName
   ].filter(Boolean);
-
 
   return {
     city,
@@ -362,12 +392,6 @@ function collectSearchNames(p, city) {
     }
   }
 
-
-  /*
-   * Some useful alternative names may also
-   * occur in Nominatim extratags.
-   */
-
   const extras =
     p.extratags || {};
 
@@ -398,8 +422,6 @@ function collectSearchNames(p, city) {
 
 /*
  * SEARCH RANKING
- *
- * Results are ranked, not aggressively filtered.
  */
 
 function findBestMatch(query, city, names) {
@@ -419,24 +441,10 @@ function findBestMatch(query, city, names) {
       )
   };
 
-
-  /*
-   * Exact locality.
-   */
-
   if (normalizedCity === q) {
     best.score = 1000;
     best.type = "exact locality";
   }
-
-
-  /*
-   * Locality beginning with the search phrase.
-   *
-   * Example:
-   *
-   * Janów -> Janów Lubelski
-   */
 
   else if (
     normalizedCity.startsWith(q)
@@ -444,12 +452,6 @@ function findBestMatch(query, city, names) {
     best.score = 900;
     best.type = "locality";
   }
-
-
-  /*
-   * Alternative, local, historical and
-   * multilingual names.
-   */
 
   for (const name of names) {
     const n =
@@ -492,10 +494,6 @@ function findBestMatch(query, city, names) {
   return best;
 }
 
-
-/*
- * BASIC TEXT SIMILARITY
- */
 
 function similarityScore(a, b) {
   if (!a || !b) {
@@ -584,17 +582,6 @@ function levenshtein(a, b) {
 }
 
 
-/*
- * NORMALIZE TEXT FOR SEARCH
- *
- * Diacritics and capitalization do not affect
- * ranking.
- *
- * Example:
- *
- * Janow -> Janów
- */
-
 function normalizeText(value) {
   return String(value || "")
     .normalize("NFD")
@@ -618,21 +605,17 @@ function deduplicatePlaces(places) {
   for (const place of places) {
     const key = [
       normalizeText(place.city),
+
       place.region ||
         normalizeText(
           place.regionName
         ),
+
       place.country
     ].join("|");
 
     const existing =
       unique.get(key);
-
-    /*
-     * If multiple OSM objects resolve to the
-     * same Census locality, keep the result
-     * with the strongest match.
-     */
 
     if (
       !existing ||
@@ -666,7 +649,6 @@ function renderResults(places) {
 
     div.className = "result";
 
-
     const main =
       document.createElement("div");
 
@@ -674,15 +656,6 @@ function renderResults(places) {
       place.displayLabel;
 
     div.appendChild(main);
-
-
-    /*
-     * Explain non-obvious search results.
-     *
-     * "Found via" deliberately does NOT claim
-     * that the matched phrase is another name
-     * for the Census locality itself.
-     */
 
     if (
       place.matchedName &&
@@ -709,7 +682,6 @@ function renderResults(places) {
 
       div.appendChild(reason);
     }
-
 
     div.onclick =
       () => choosePlace(place);
@@ -811,22 +783,12 @@ function choosePlace(place) {
     `${place.lon.toFixed(4)}` +
     `</span>`;
 
-
-  /*
-   * Exact Hive Census Protocol v1.0 payload.
-   */
-
   $("jsonPreview").textContent =
     JSON.stringify(
       censusPayload(),
       null,
       2
     );
-
-
-  /*
-   * MAP
-   */
 
   map.setView(
     [place.lat, place.lon],
@@ -851,6 +813,8 @@ function choosePlace(place) {
         )
       )
       .openPopup();
+
+  updatePublishButton();
 }
 
 
@@ -871,7 +835,7 @@ function clearSelection() {
 
   if ($("jsonPreview")) {
     $("jsonPreview").textContent =
-      "Select a locality to preview the declaration.";
+      "Choose a location to preview the exact data that will be signed.";
   }
 
   if (selectedMarker) {
@@ -881,6 +845,8 @@ function clearSelection() {
 
     selectedMarker = null;
   }
+
+  updatePublishButton();
 }
 
 
@@ -894,7 +860,7 @@ function censusPayload() {
   }
 
   return {
-    v: 1,
+    v: PROTOCOL_VERSION,
     action: "set",
 
     country:
@@ -926,16 +892,159 @@ function censusPayload() {
 
 
 /*
- * PUBLISHING
- *
- * Still intentionally disabled.
+ * REAL HIVE BROADCAST
  */
 
 $("publishBtn").onclick = () => {
+  if (publishing) {
+    return;
+  }
+
+  const account = getAccount();
+  const payload = censusPayload();
+  const acknowledged = $("permanentAck").checked;
+
+  if (!validHiveAccountName(account)) {
+    setStatus(
+      "Enter a valid Hive account.",
+      true
+    );
+    return;
+  }
+
+  if (!payload) {
+    setStatus(
+      "Choose a locality first.",
+      true
+    );
+    return;
+  }
+
+  if (!acknowledged) {
+    setStatus(
+      "Confirm that you understand the declaration is permanently recorded in blockchain history.",
+      true
+    );
+    return;
+  }
+
+  const kc = keychain();
+
+  if (!kc) {
+    setStatus(
+      "Hive Keychain was not detected in this browser.",
+      true
+    );
+    return;
+  }
+
+  if (
+    typeof kc.requestCustomJson !==
+    "function"
+  ) {
+    setStatus(
+      "This Hive signing provider does not expose requestCustomJson.",
+      true
+    );
+    return;
+  }
+
+  /*
+   * Important:
+   *
+   * The JSON sent to Keychain is exactly the JSON
+   * displayed in the review panel.
+   */
+
+  const json =
+    JSON.stringify(payload);
+
+  publishing = true;
+  updatePublishButton();
+
   setStatus(
-    "Publishing is intentionally disabled while Hive Census v0.3.1 search and Protocol v1.0 payloads are being tested.",
-    true
+    "Waiting for approval in Hive Keychain…"
   );
+
+  try {
+    kc.requestCustomJson(
+      account,
+      CUSTOM_JSON_ID,
+      "Posting",
+      json,
+      "Publish Hive Census location",
+      response => {
+        publishing = false;
+        updatePublishButton();
+
+        console.log(
+          "Hive Census Keychain response:",
+          response
+        );
+
+        if (
+          response &&
+          response.success
+        ) {
+          const txId =
+            response.result &&
+            typeof response.result === "object"
+              ? (
+                  response.result.id ||
+                  response.result.tx_id ||
+                  response.result.txid ||
+                  null
+                )
+              : null;
+
+          if (txId) {
+            setStatus(
+              `Census declaration published successfully. Transaction: ${txId}`
+            );
+          } else {
+            setStatus(
+              "Census declaration published successfully."
+            );
+          }
+
+          return;
+        }
+
+        const error =
+          response &&
+          (
+            response.message ||
+            response.error
+          )
+            ? (
+                response.message ||
+                response.error
+              )
+            : "The operation was cancelled or rejected.";
+
+        setStatus(
+          `Publishing failed: ${error}`,
+          true
+        );
+      }
+    );
+
+  } catch (error) {
+    publishing = false;
+    updatePublishButton();
+
+    console.error(error);
+
+    setStatus(
+      `Publishing failed: ${
+        error &&
+        error.message
+          ? error.message
+          : "Unknown Keychain error."
+      }`,
+      true
+    );
+  }
 };
 
 
@@ -980,3 +1089,10 @@ L.tileLayer(
       '&copy; OpenStreetMap contributors'
   }
 ).addTo(map);
+
+
+/*
+ * INITIAL UI STATE
+ */
+
+updatePublishButton();
