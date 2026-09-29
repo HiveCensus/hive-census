@@ -8,7 +8,7 @@ let searchController = null;
 let lastSearch = "";
 let publishing = false;
 
-const CENSUS_VERSION = "0.6.1";
+const CENSUS_VERSION = "0.6.2";
 const PROTOCOL_VERSION = 1;
 const CUSTOM_JSON_ID = "hive_census";
 const CENSUS_API = "/api/census";
@@ -1614,7 +1614,7 @@ $("publishBtn").onclick =
  * GLOBAL HIVE CENSUS READER
  * ============================================================
  *
- * v0.6.1
+ * v0.6.2
  *
  * Current active state is loaded from /api/census.
  *
@@ -1715,13 +1715,6 @@ function validCensusApiRecord(
 
 /*
  * GROUP RECORDS BY LOCALITY
- *
- * Protocol coordinates represent the locality,
- * not the user's precise position.
- *
- * We therefore group records using the normalized
- * Census locality identity rather than moving markers
- * away from their blockchain-declared coordinates.
  */
 
 function censusLocalityKey(
@@ -1900,6 +1893,37 @@ function addCensusLocalityMarker(
 
 
 /*
+ * UPDATE PUBLIC CENSUS COUNTER
+ */
+
+function updateCensusStats(
+  userCount,
+  localityCount
+) {
+  const stats =
+    $("censusStats");
+
+  if (!stats) {
+    return;
+  }
+
+  const userLabel =
+    userCount === 1
+      ? "user"
+      : "users";
+
+  const localityLabel =
+    localityCount === 1
+      ? "locality"
+      : "localities";
+
+  stats.textContent =
+    `${userCount} ${userLabel} · ` +
+    `${localityCount} ${localityLabel}`;
+}
+
+
+/*
  * LOAD GLOBAL CENSUS MAP
  */
 
@@ -1972,9 +1996,19 @@ async function loadCensusMap() {
       );
 
     /*
+     * Update public statistics.
+     */
+
+    updateCensusStats(
+      activeRecords.length,
+      localities.length
+    );
+
+    /*
      * Only replace markers after receiving
      * and validating the API response.
      */
+
     clearCensusMarkers();
 
     for (
@@ -1988,7 +2022,7 @@ async function loadCensusMap() {
 
     /*
      * One locality:
-     * show its region.
+     * show its local area.
      *
      * Multiple localities:
      * fit all locality markers.
@@ -2008,7 +2042,7 @@ async function loadCensusMap() {
           locality.lat,
           locality.lon
         ],
-        7
+        9
       );
     }
 
@@ -2054,6 +2088,14 @@ async function loadCensusMap() {
       "Hive Census: failed to load global Census index:",
       error
     );
+
+    const stats =
+      $("censusStats");
+
+    if (stats) {
+      stats.textContent =
+        "Census data temporarily unavailable";
+    }
 
     return {
       records:
