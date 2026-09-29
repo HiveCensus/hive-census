@@ -8,7 +8,7 @@ let searchController = null;
 let lastSearch = "";
 let publishing = false;
 
-const CENSUS_VERSION = "0.6.2";
+const CENSUS_VERSION = "0.6.3";
 const PROTOCOL_VERSION = 1;
 const CUSTOM_JSON_ID = "hive_census";
 const CENSUS_API = "/api/census";
@@ -632,6 +632,65 @@ async function searchPlaces(query) {
 
 
 /*
+ * CANONICAL LOCALITY NAME
+ *
+ * address.city / town / village is useful for identifying
+ * the locality, but it is not always the best canonical name.
+ *
+ * Example:
+ * Nominatim may return "Gorzow" in the address hierarchy
+ * while the mapped place object itself is named
+ * "Gorzów Wielkopolski".
+ *
+ * For Census we prefer:
+ *
+ * 1. local-language name for the country, when available,
+ * 2. the object's main name,
+ * 3. the address locality as fallback.
+ */
+
+function getCanonicalLocalityName(
+  place,
+  addressCity,
+  countryCode
+) {
+  const namedetails =
+    place.namedetails || {};
+
+  const localLanguageKey =
+    countryCode
+      ? `name:${countryCode.toLowerCase()}`
+      : null;
+
+  if (
+    localLanguageKey &&
+    typeof namedetails[localLanguageKey] === "string" &&
+    namedetails[localLanguageKey].trim()
+  ) {
+    return namedetails[
+      localLanguageKey
+    ].trim();
+  }
+
+  if (
+    typeof namedetails.name === "string" &&
+    namedetails.name.trim()
+  ) {
+    return namedetails.name.trim();
+  }
+
+  if (
+    typeof place.name === "string" &&
+    place.name.trim()
+  ) {
+    return place.name.trim();
+  }
+
+  return addressCity;
+}
+
+
+/*
  * NORMALIZE PLACE
  */
 
@@ -642,7 +701,7 @@ function normalizePlace(
   const a =
     p.address || {};
 
-  const city =
+  const addressCity =
     a.city ||
     a.town ||
     a.village ||
@@ -660,10 +719,21 @@ function normalizePlace(
       : null;
 
   if (
-    !city ||
+    !addressCity ||
     !countryName ||
     !countryCode
   ) {
+    return null;
+  }
+
+  const city =
+    getCanonicalLocalityName(
+      p,
+      addressCity,
+      countryCode
+    );
+
+  if (!city) {
     return null;
   }
 
@@ -701,6 +771,21 @@ function normalizePlace(
       p,
       city
     );
+
+  /*
+   * Keep the address locality as an additional
+   * searchable name when it differs from the
+   * canonical Census name.
+   */
+
+  if (
+    normalizeText(addressCity) !==
+    normalizeText(city)
+  ) {
+    searchNames.push(
+      addressCity
+    );
+  }
 
   const match =
     findBestMatch(
@@ -1614,7 +1699,7 @@ $("publishBtn").onclick =
  * GLOBAL HIVE CENSUS READER
  * ============================================================
  *
- * v0.6.2
+ * v0.6.3
  *
  * Current active state is loaded from /api/census.
  *
@@ -1995,19 +2080,10 @@ async function loadCensusMap() {
         activeRecords
       );
 
-    /*
-     * Update public statistics.
-     */
-
     updateCensusStats(
       activeRecords.length,
       localities.length
     );
-
-    /*
-     * Only replace markers after receiving
-     * and validating the API response.
-     */
 
     clearCensusMarkers();
 
@@ -2019,17 +2095,6 @@ async function loadCensusMap() {
         locality
       );
     }
-
-    /*
-     * One locality:
-     * show its local area.
-     *
-     * Multiple localities:
-     * fit all locality markers.
-     *
-     * Zero localities:
-     * retain the current map view.
-     */
 
     if (
       localities.length === 1
