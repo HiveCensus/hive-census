@@ -8,7 +8,7 @@ let searchController = null;
 let lastSearch = "";
 let publishing = false;
 
-const CENSUS_VERSION = "0.6.3";
+const CENSUS_VERSION = "0.6.4";
 const PROTOCOL_VERSION = 1;
 const CUSTOM_JSON_ID = "hive_census";
 const CENSUS_API = "/api/census";
@@ -632,30 +632,90 @@ async function searchPlaces(query) {
 
 
 /*
+ * LOCALITY HELPERS
+ */
+
+function getAddressLocality(
+  address
+) {
+  return (
+    address.city ||
+    address.town ||
+    address.village ||
+    address.hamlet ||
+    null
+  );
+}
+
+
+function isLocalityResult(
+  place
+) {
+  const category =
+    String(
+      place.category ||
+      place.class ||
+      ""
+    ).toLowerCase();
+
+  const type =
+    String(
+      place.type ||
+      ""
+    ).toLowerCase();
+
+  if (
+    category !== "place"
+  ) {
+    return false;
+  }
+
+  return [
+    "city",
+    "town",
+    "village",
+    "hamlet"
+  ].includes(type);
+}
+
+
+/*
  * CANONICAL LOCALITY NAME
  *
- * address.city / town / village is useful for identifying
- * the locality, but it is not always the best canonical name.
+ * Important rule:
  *
- * Example:
- * Nominatim may return "Gorzow" in the address hierarchy
- * while the mapped place object itself is named
- * "Gorzów Wielkopolski".
+ * A restaurant, hotel, shop, building, road or other
+ * point of interest must NEVER become the Census city.
  *
- * For Census we prefer:
+ * For non-locality search results we always use the
+ * locality from the address hierarchy.
  *
- * 1. local-language name for the country, when available,
- * 2. the object's main name,
- * 3. the address locality as fallback.
+ * Only a genuine Nominatim place result may supply
+ * its own object name as the canonical locality name.
  */
 
 function getCanonicalLocalityName(
   place,
-  addressCity,
+  addressLocality,
   countryCode
 ) {
+  if (
+    !isLocalityResult(
+      place
+    )
+  ) {
+    return addressLocality;
+  }
+
   const namedetails =
     place.namedetails || {};
+
+  /*
+   * Prefer the country's own language name when
+   * Nominatim supplies one.
+   *
+   * For Poland this means name:pl.
+   */
 
   const localLanguageKey =
     countryCode
@@ -686,7 +746,7 @@ function getCanonicalLocalityName(
     return place.name.trim();
   }
 
-  return addressCity;
+  return addressLocality;
 }
 
 
@@ -701,13 +761,10 @@ function normalizePlace(
   const a =
     p.address || {};
 
-  const addressCity =
-    a.city ||
-    a.town ||
-    a.village ||
-    a.municipality ||
-    a.hamlet ||
-    null;
+  const addressLocality =
+    getAddressLocality(
+      a
+    );
 
   const countryName =
     a.country ||
@@ -718,18 +775,31 @@ function normalizePlace(
       ? a.country_code.toUpperCase()
       : null;
 
+  /*
+   * Census requires an actual locality.
+   *
+   * If Nominatim cannot associate the result
+   * with a city/town/village/hamlet, we do not
+   * offer it as a Census location.
+   */
+
   if (
-    !addressCity ||
+    !addressLocality ||
     !countryName ||
     !countryCode
   ) {
     return null;
   }
 
+  const localityResult =
+    isLocalityResult(
+      p
+    );
+
   const city =
     getCanonicalLocalityName(
       p,
-      addressCity,
+      addressLocality,
       countryCode
     );
 
@@ -773,17 +843,21 @@ function normalizePlace(
     );
 
   /*
-   * Keep the address locality as an additional
-   * searchable name when it differs from the
-   * canonical Census name.
+   * Address locality remains searchable even when
+   * the genuine place object has a more complete
+   * canonical name.
    */
 
   if (
-    normalizeText(addressCity) !==
-    normalizeText(city)
+    normalizeText(
+      addressLocality
+    ) !==
+    normalizeText(
+      city
+    )
   ) {
     searchNames.push(
-      addressCity
+      addressLocality
     );
   }
 
@@ -794,11 +868,39 @@ function normalizePlace(
       searchNames
     );
 
+  /*
+   * Genuine locality results should rank above POIs
+   * that merely happen to be located in that locality.
+   */
+
+  const localityBonus =
+    localityResult
+      ? 200
+      : 0;
+
   const displayParts = [
     city,
     regionName,
     countryName
   ].filter(Boolean);
+
+  /*
+   * If the user found the locality through a POI,
+   * retain that information for display only.
+   * It is never written into the Census payload.
+   */
+
+  let foundVia =
+    match.name;
+
+  if (
+    !localityResult &&
+    typeof p.name === "string" &&
+    p.name.trim()
+  ) {
+    foundVia =
+      p.name.trim();
+  }
 
   return {
     city,
@@ -820,13 +922,18 @@ function normalizePlace(
       displayParts.join(", "),
 
     matchedName:
-      match.name,
+      foundVia,
 
     matchType:
-      match.type,
+      localityResult
+        ? match.type
+        : "point of interest",
 
     score:
-      match.score,
+      match.score +
+      localityBonus,
+
+    localityResult,
 
     osmType:
       p.type || null,
@@ -1148,6 +1255,9 @@ function normalizeText(
 
 /*
  * DEDUPLICATION
+ *
+ * POIs inside the same locality should not create
+ * multiple identical Census choices.
  */
 
 function deduplicatePlaces(
@@ -1238,9 +1348,9 @@ function renderResults(
         normalizeText(
           place.matchedName
         ) !==
-          normalizeText(
-            place.city
-          )
+        normalizeText(
+          place.city
+        )
       ) {
         const reason =
           document.createElement(
@@ -1699,7 +1809,7 @@ $("publishBtn").onclick =
  * GLOBAL HIVE CENSUS READER
  * ============================================================
  *
- * v0.6.3
+ * v0.6.4
  *
  * Current active state is loaded from /api/census.
  *
