@@ -9,7 +9,6 @@
   <title>Hive Census — Where in the world is Hive?</title>
 
   <link rel="icon" href="/assets/hive-logo.png">
-
   <link rel="preconnect" href="https://unpkg.com">
 
   <link
@@ -150,8 +149,24 @@
 
       </div>
 
-      <div class="badge">
-        LIVE · ON-CHAIN CENSUS
+      <div class="map-status-row">
+
+        <div class="badge">
+          LIVE · ON-CHAIN CENSUS
+        </div>
+
+        <div
+          id="indexerStatus"
+          class="indexer-status indexer-status-loading"
+          title="Checking Hive blockchain synchronization…"
+        >
+          <span class="indexer-dot"></span>
+
+          <span id="indexerStatusText">
+            Checking sync…
+          </span>
+        </div>
+
       </div>
 
     </div>
@@ -302,9 +317,7 @@
             style="margin-top:8px"
           ></div>
 
-          <div
-            style="margin-top:14px"
-          >
+          <div style="margin-top:14px">
 
             <button
               id="leaveCensusBtn"
