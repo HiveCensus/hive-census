@@ -10,10 +10,12 @@ let publishing = false;
 let unsetting = false;
 let currentCensusRecords = [];
 
-const CENSUS_VERSION = "0.6.5";
+const CENSUS_VERSION = "0.6.6";
 const PROTOCOL_VERSION = 1;
 const CUSTOM_JSON_ID = "hive_census";
 const CENSUS_API = "/api/census";
+const INDEXER_STATUS_API = "/api/indexer/status";
+const INDEXER_STATUS_REFRESH_MS = 60000;
 
 
 /*
@@ -630,12 +632,6 @@ if (publishUnsetButton) {
                   "hidden"
                 );
               }
-
-              /*
-               * The API may not have indexed the
-               * operation after only ten seconds,
-               * but refreshing here is harmless.
-               */
 
               setTimeout(
                 loadCensusMap,
@@ -2325,12 +2321,6 @@ async function loadCensusMap() {
         validCensusApiRecord
       );
 
-    /*
-     * Keep current active state locally so the
-     * account field can immediately show whether
-     * that account is already in Census.
-     */
-
     currentCensusRecords =
       activeRecords;
 
@@ -2424,6 +2414,220 @@ async function loadCensusMap() {
 
 
 /*
+ * BLOCKCHAIN / INDEXER STATUS
+ */
+
+function formatIndexerTime(
+  value
+) {
+  if (!value) {
+    return null;
+  }
+
+  const date =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return null;
+  }
+
+  return date.toLocaleString(
+    undefined,
+    {
+      dateStyle: "short",
+      timeStyle: "short"
+    }
+  );
+}
+
+
+function setIndexerStatus(
+  state,
+  data = null
+) {
+  const status =
+    $("indexerStatus");
+
+  const text =
+    $("indexerStatusText");
+
+  if (
+    !status ||
+    !text
+  ) {
+    return;
+  }
+
+  status.classList.remove(
+    "indexer-status-loading",
+    "indexer-status-synced",
+    "indexer-status-syncing",
+    "indexer-status-behind",
+    "indexer-status-unavailable"
+  );
+
+  let label =
+    "Census status unavailable";
+
+  let cssClass =
+    "indexer-status-unavailable";
+
+  if (
+    state === "synced"
+  ) {
+    label =
+      "Census synced";
+
+    cssClass =
+      "indexer-status-synced";
+  }
+
+  else if (
+    state === "catching_up"
+  ) {
+    label =
+      "Census syncing";
+
+    cssClass =
+      "indexer-status-syncing";
+  }
+
+  else if (
+    state === "stalled" ||
+    state === "error"
+  ) {
+    label =
+      "Census temporarily behind";
+
+    cssClass =
+      "indexer-status-behind";
+  }
+
+  status.classList.add(
+    cssClass
+  );
+
+  text.textContent =
+    label;
+
+  if (!data) {
+    status.title =
+      "Hive Census synchronization status is currently unavailable.";
+
+    return;
+  }
+
+  const details = [
+    label
+  ];
+
+  const blocksBehind =
+    Number(
+      data.blocks_behind
+    );
+
+  if (
+    Number.isFinite(
+      blocksBehind
+    )
+  ) {
+    details.push(
+      `${blocksBehind.toLocaleString()} blocks behind Hive`
+    );
+  }
+
+  const lastSuccessfulScan =
+    formatIndexerTime(
+      data.last_successful_scan
+    );
+
+  if (
+    lastSuccessfulScan
+  ) {
+    details.push(
+      `Last successful scan: ${lastSuccessfulScan}`
+    );
+  }
+
+  if (
+    data.last_error
+  ) {
+    details.push(
+      `Indexer error: ${data.last_error}`
+    );
+  }
+
+  status.title =
+    details.join("\n");
+}
+
+
+async function loadIndexerStatus() {
+  try {
+    const response =
+      await fetch(
+        INDEXER_STATUS_API,
+        {
+          method:
+            "GET",
+
+          headers: {
+            "Accept":
+              "application/json"
+          },
+
+          cache:
+            "no-store"
+        }
+      );
+
+    if (!response.ok) {
+      throw new Error(
+        `Indexer status HTTP ${response.status}`
+      );
+    }
+
+    const data =
+      await response.json();
+
+    if (
+      !data ||
+      data.ok !== true ||
+      typeof data.indexer_state !==
+        "string"
+    ) {
+      throw new Error(
+        "Invalid indexer status response."
+      );
+    }
+
+    setIndexerStatus(
+      data.indexer_state,
+      data
+    );
+
+    return data;
+
+  } catch (error) {
+    console.error(
+      "Hive Census: failed to load indexer status:",
+      error
+    );
+
+    setIndexerStatus(
+      "unavailable"
+    );
+
+    return null;
+  }
+}
+
+
+/*
  * HTML SAFETY
  */
 
@@ -2488,3 +2692,9 @@ console.log(
 );
 
 loadCensusMap();
+loadIndexerStatus();
+
+setInterval(
+  loadIndexerStatus,
+  INDEXER_STATUS_REFRESH_MS
+);
