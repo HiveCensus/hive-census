@@ -2,18 +2,55 @@ const HIVE_RPC = "https://api.hive.blog";
 const CENSUS_ID = "hive_census";
 const PROTOCOL_VERSION = 1;
 
-const VERSION = "0.6.3";
+const VERSION = "0.7.0";
 
-// Ręczne skanowanie
-const DEFAULT_MANUAL_SCAN_BLOCKS = 200;
-const MAX_MANUAL_SCAN_BLOCKS = 500;
+// ============================================================
+// MANUAL INDEXER
+// ============================================================
 
-// Automatyczne skanowanie.
-// 100 bloków = ok. 5 minut historii Hive.
-const SCHEDULED_SCAN_BLOCKS = 200;
+const DEFAULT_MANUAL_SCAN_BLOCKS = 500;
+const MAX_MANUAL_SCAN_BLOCKS = 1000;
 
-// Ile bloków pobieramy z Hive jednym requestem RPC.
+// ============================================================
+// SCHEDULED INDEXER / CATCH-UP
+// ============================================================
+//
+// Hive produkuje około 100 bloków na 5 minut.
+//
+// Nie skanujemy już sztywnej liczby bloków.
+// Liczba bloków zależy od wielkości zaległości.
+//
+// Normalny stan:
+//   <= 250 bloków zaległości
+//
+// Catch-up:
+//   251–2000
+//
+// Aggressive catch-up:
+//   > 2000
+//
+// Limit jest celowo ograniczony, żeby pojedyncze uruchomienie
+// Workera nie próbowało przetworzyć tysięcy bloków naraz.
+//
+
+const NORMAL_SCAN_BLOCKS = 250;
+const CATCHUP_SCAN_BLOCKS = 600;
+const AGGRESSIVE_SCAN_BLOCKS = 1000;
+
+// ============================================================
+// RPC BATCH SIZE
+// ============================================================
+//
+// Jedno wywołanie block_api.get_block_range pobiera
+// maksymalnie 100 bloków.
+//
+
 const BLOCK_BATCH_SIZE = 100;
+
+
+// ============================================================
+// WORKER
+// ============================================================
 
 export default {
 
@@ -85,33 +122,59 @@ export default {
 
     if (url.pathname === "/api/indexer/status") {
       try {
-        const lastScanned = await getMeta(
-          env.DB,
-          "last_scanned_block"
-        );
+        const [
+          lastScanned,
+          lastScheduledRun,
+          lastSuccessfulScan,
+          lastError,
+          lastErrorAt
+        ] = await Promise.all([
+          getMeta(
+            env.DB,
+            "last_scanned_block"
+          ),
 
-        const lastScheduledRun = await getMeta(
-          env.DB,
-          "last_scheduled_run"
-        );
+          getMeta(
+            env.DB,
+            "last_scheduled_run"
+          ),
 
-        const countResult = await env.DB.prepare(`
-          SELECT COUNT(*) AS count
-          FROM census_current
-        `).first();
+          getMeta(
+            env.DB,
+            "last_successful_scan"
+          ),
+
+          getMeta(
+            env.DB,
+            "last_error"
+          ),
+
+          getMeta(
+            env.DB,
+            "last_error_at"
+          )
+        ]);
+
+        const countResult =
+          await env.DB.prepare(`
+            SELECT COUNT(*) AS count
+            FROM census_current
+          `).first();
 
         const props = await hiveRpc(
           "condenser_api.get_dynamic_global_properties",
           []
         );
 
-        const headBlock = Number(
-          props.head_block_number
-        );
+        const headBlock =
+          Number(
+            props.head_block_number
+          );
 
-        const irreversibleBlock = Number(
-          props.last_irreversible_block_num
-        );
+        const irreversibleBlock =
+          Number(
+            props.last_irreversible_block_num
+          );
 
         const lastScannedNumber =
           lastScanned === null
@@ -123,20 +186,54 @@ export default {
             ? null
             : Math.max(
                 0,
-                irreversibleBlock - lastScannedNumber
+                irreversibleBlock -
+                lastScannedNumber
               );
+
+        const indexerState =
+          determineIndexerState(
+            blocksBehind,
+            lastScheduledRun,
+            lastErrorAt
+          );
 
         return json({
           ok: true,
-          version: VERSION,
-          last_scanned_block: lastScannedNumber,
-          head_block_number: headBlock,
-          last_irreversible_block_num: irreversibleBlock,
-          blocks_behind: blocksBehind,
-          census_accounts: Number(
-            countResult?.count || 0
-          ),
-          last_scheduled_run: lastScheduledRun
+
+          version:
+            VERSION,
+
+          indexer_state:
+            indexerState,
+
+          last_scanned_block:
+            lastScannedNumber,
+
+          head_block_number:
+            headBlock,
+
+          last_irreversible_block_num:
+            irreversibleBlock,
+
+          blocks_behind:
+            blocksBehind,
+
+          census_accounts:
+            Number(
+              countResult?.count || 0
+            ),
+
+          last_scheduled_run:
+            lastScheduledRun,
+
+          last_successful_scan:
+            lastSuccessfulScan,
+
+          last_error:
+            lastError,
+
+          last_error_at:
+            lastErrorAt
         });
 
       } catch (error) {
@@ -148,32 +245,47 @@ export default {
     // MANUAL INDEXER
     //
     // /api/indexer/scan
-    // /api/indexer/scan?blocks=200
+    // /api/indexer/scan?blocks=500
     // --------------------------------------------------------
 
     if (url.pathname === "/api/indexer/scan") {
       try {
-        let requestedBlocks = Number(
-          url.searchParams.get("blocks") ||
-          DEFAULT_MANUAL_SCAN_BLOCKS
-        );
+        let requestedBlocks =
+          Number(
+            url.searchParams.get("blocks") ||
+            DEFAULT_MANUAL_SCAN_BLOCKS
+          );
 
         if (
-          !Number.isInteger(requestedBlocks) ||
+          !Number.isInteger(
+            requestedBlocks
+          ) ||
           requestedBlocks < 1
         ) {
           requestedBlocks =
             DEFAULT_MANUAL_SCAN_BLOCKS;
         }
 
-        requestedBlocks = Math.min(
-          requestedBlocks,
-          MAX_MANUAL_SCAN_BLOCKS
+        requestedBlocks =
+          Math.min(
+            requestedBlocks,
+            MAX_MANUAL_SCAN_BLOCKS
+          );
+
+        const result =
+          await scanHive(
+            env,
+            requestedBlocks
+          );
+
+        await setMeta(
+          env.DB,
+          "last_successful_scan",
+          new Date().toISOString()
         );
 
-        const result = await scanHive(
-          env,
-          requestedBlocks
+        await clearIndexerError(
+          env.DB
         );
 
         return json({
@@ -183,6 +295,11 @@ export default {
         });
 
       } catch (error) {
+        await recordIndexerError(
+          env.DB,
+          error
+        );
+
         return errorResponse(error);
       }
     }
@@ -191,43 +308,172 @@ export default {
     // STATIC WEBSITE
     // --------------------------------------------------------
 
-    return env.ASSETS.fetch(request);
+    return env.ASSETS.fetch(
+      request
+    );
   },
+
 
   // ==========================================================
   // CLOUDFLARE CRON
   // ==========================================================
 
-  async scheduled(controller, env, ctx) {
+  async scheduled(
+    controller,
+    env,
+    ctx
+  ) {
     ctx.waitUntil(
-      runScheduledIndexer(env)
+      runScheduledIndexer(
+        env
+      )
     );
   }
 };
+
 
 // ============================================================
 // SCHEDULED INDEXER
 // ============================================================
 
-async function runScheduledIndexer(env) {
+async function runScheduledIndexer(
+  env
+) {
+  const startedAt =
+    new Date().toISOString();
+
+  /*
+   * Zapisujemy moment rozpoczęcia Crona PRZED skanowaniem.
+   *
+   * Dzięki temu last_scheduled_run odpowiada na pytanie:
+   * "Czy Cloudflare w ogóle uruchamia Cron?"
+   *
+   * W poprzedniej wersji pole było aktualizowane dopiero
+   * po udanym zakończeniu skanu.
+   */
+
+  await setMeta(
+    env.DB,
+    "last_scheduled_run",
+    startedAt
+  );
+
   try {
-    const result = await scanHive(
-      env,
-      SCHEDULED_SCAN_BLOCKS
+    // --------------------------------------------------------
+    // CHECK CURRENT LAG
+    // --------------------------------------------------------
+
+    const props =
+      await hiveRpc(
+        "condenser_api.get_dynamic_global_properties",
+        []
+      );
+
+    const irreversibleBlock =
+      Number(
+        props.last_irreversible_block_num
+      );
+
+    if (
+      !Number.isInteger(
+        irreversibleBlock
+      ) ||
+      irreversibleBlock <= 0
+    ) {
+      throw new Error(
+        "Hive RPC returned invalid last irreversible block."
+      );
+    }
+
+    const storedLastBlock =
+      await getMeta(
+        env.DB,
+        "last_scanned_block"
+      );
+
+    const lastScanned =
+      storedLastBlock === null
+        ? null
+        : Number(
+            storedLastBlock
+          );
+
+    const blocksBehind =
+      lastScanned === null
+        ? NORMAL_SCAN_BLOCKS
+        : Math.max(
+            0,
+            irreversibleBlock -
+            lastScanned
+          );
+
+    // --------------------------------------------------------
+    // SELECT SCAN SIZE
+    // --------------------------------------------------------
+
+    const requestedBlocks =
+      chooseScheduledScanSize(
+        blocksBehind
+      );
+
+    console.log(
+      "Hive Census scheduled indexer starting:",
+      JSON.stringify({
+        started_at:
+          startedAt,
+
+        last_scanned_block:
+          lastScanned,
+
+        last_irreversible_block_num:
+          irreversibleBlock,
+
+        blocks_behind:
+          blocksBehind,
+
+        requested_blocks:
+          requestedBlocks
+      })
     );
+
+    // --------------------------------------------------------
+    // SCAN
+    // --------------------------------------------------------
+
+    const result =
+      await scanHive(
+        env,
+        requestedBlocks
+      );
+
+    const completedAt =
+      new Date().toISOString();
 
     await setMeta(
       env.DB,
-      "last_scheduled_run",
-      new Date().toISOString()
+      "last_successful_scan",
+      completedAt
+    );
+
+    await clearIndexerError(
+      env.DB
     );
 
     console.log(
       "Hive Census scheduled scan completed:",
-      JSON.stringify(result)
+      JSON.stringify({
+        completed_at:
+          completedAt,
+        ...result
+      })
     );
 
   } catch (error) {
+    await recordIndexerError(
+      env.DB,
+      error
+    );
+
     console.error(
       "Hive Census scheduled scan failed:",
       error
@@ -237,26 +483,166 @@ async function runScheduledIndexer(env) {
   }
 }
 
+
+// ============================================================
+// AUTOMATIC CATCH-UP POLICY
+// ============================================================
+
+function chooseScheduledScanSize(
+  blocksBehind
+) {
+  if (
+    !Number.isFinite(
+      blocksBehind
+    ) ||
+    blocksBehind <= 0
+  ) {
+    return NORMAL_SCAN_BLOCKS;
+  }
+
+  if (
+    blocksBehind > 2000
+  ) {
+    return AGGRESSIVE_SCAN_BLOCKS;
+  }
+
+  if (
+    blocksBehind > 250
+  ) {
+    return CATCHUP_SCAN_BLOCKS;
+  }
+
+  return NORMAL_SCAN_BLOCKS;
+}
+
+
+// ============================================================
+// INDEXER STATE
+// ============================================================
+
+function determineIndexerState(
+  blocksBehind,
+  lastScheduledRun,
+  lastErrorAt
+) {
+  /*
+   * Brak cursora = jeszcze nie możemy określić
+   * stanu synchronizacji.
+   */
+
+  if (
+    blocksBehind === null ||
+    !Number.isFinite(
+      blocksBehind
+    )
+  ) {
+    return "unknown";
+  }
+
+  /*
+   * Jeśli Cron nie uruchomił się od ponad 15 minut,
+   * traktujemy indexer jako stalled.
+   *
+   * Cron jest obecnie planowany co 5 minut.
+   */
+
+  if (lastScheduledRun) {
+    const lastRunTime =
+      Date.parse(
+        lastScheduledRun
+      );
+
+    if (
+      Number.isFinite(
+        lastRunTime
+      )
+    ) {
+      const ageMs =
+        Date.now() -
+        lastRunTime;
+
+      if (
+        ageMs >
+        15 * 60 * 1000
+      ) {
+        return "stalled";
+      }
+    }
+  }
+
+  /*
+   * Świeży błąd indexera również oznacza problem.
+   */
+
+  if (lastErrorAt) {
+    const errorTime =
+      Date.parse(
+        lastErrorAt
+      );
+
+    if (
+      Number.isFinite(
+        errorTime
+      )
+    ) {
+      const errorAgeMs =
+        Date.now() -
+        errorTime;
+
+      if (
+        errorAgeMs <
+        15 * 60 * 1000
+      ) {
+        return "error";
+      }
+    }
+  }
+
+  /*
+   * Niewielka różnica jest normalna.
+   *
+   * Cron działa co kilka minut, więc indexer nie musi
+   * przez cały czas wskazywać dokładnie 0.
+   */
+
+  if (
+    blocksBehind <= 250
+  ) {
+    return "synced";
+  }
+
+  return "catching_up";
+}
+
+
 // ============================================================
 // MAIN INDEXER
 // ============================================================
 
-async function scanHive(env, requestedBlocks) {
-  const props = await hiveRpc(
-    "condenser_api.get_dynamic_global_properties",
-    []
-  );
+async function scanHive(
+  env,
+  requestedBlocks
+) {
+  const props =
+    await hiveRpc(
+      "condenser_api.get_dynamic_global_properties",
+      []
+    );
 
-  const headBlock = Number(
-    props.head_block_number
-  );
+  const headBlock =
+    Number(
+      props.head_block_number
+    );
 
-  const irreversibleBlock = Number(
-    props.last_irreversible_block_num
-  );
+  const irreversibleBlock =
+    Number(
+      props.last_irreversible_block_num
+    );
 
   if (
-    !Number.isInteger(irreversibleBlock) ||
+    !Number.isInteger(
+      irreversibleBlock
+    ) ||
     irreversibleBlock <= 0
   ) {
     throw new Error(
@@ -264,62 +650,118 @@ async function scanHive(env, requestedBlocks) {
     );
   }
 
-  const storedLastBlock = await getMeta(
-    env.DB,
-    "last_scanned_block"
-  );
+  const storedLastBlock =
+    await getMeta(
+      env.DB,
+      "last_scanned_block"
+    );
 
   let startBlock;
 
-  if (storedLastBlock !== null) {
+  if (
+    storedLastBlock !== null
+  ) {
     startBlock =
-      Number(storedLastBlock) + 1;
+      Number(
+        storedLastBlock
+      ) + 1;
   } else {
-    // Ten przypadek jest zabezpieczeniem.
-    // Produkcyjna baza ma już ustawiony cursor.
-    startBlock = Math.max(
-      1,
-      irreversibleBlock -
+    /*
+     * Zabezpieczenie dla nowej bazy.
+     *
+     * Produkcyjna baza ma już ustawiony cursor.
+     */
+
+    startBlock =
+      Math.max(
+        1,
+        irreversibleBlock -
         requestedBlocks +
         1
-    );
+      );
   }
+
 
   // ----------------------------------------------------------
   // ALREADY CAUGHT UP
   // ----------------------------------------------------------
 
-  if (startBlock > irreversibleBlock) {
+  if (
+    startBlock >
+    irreversibleBlock
+  ) {
+    const countResult =
+      await env.DB.prepare(`
+        SELECT COUNT(*) AS count
+        FROM census_current
+      `).first();
+
     return {
       message:
         "Indexer is already caught up to the last irreversible block.",
-      start_block: null,
-      end_block: null,
-      head_block_number: headBlock,
+
+      start_block:
+        null,
+
+      end_block:
+        null,
+
+      head_block_number:
+        headBlock,
+
       last_irreversible_block_num:
         irreversibleBlock,
+
       last_scanned_block:
         storedLastBlock === null
           ? null
-          : Number(storedLastBlock),
-      blocks_behind: 0,
-      blocks_scanned: 0,
-      transactions_scanned: 0,
-      operations_scanned: 0,
-      census_operations: 0,
-      valid_census_operations: 0,
-      invalid_census_operations: 0,
-      set_operations: 0,
-      unset_operations: 0
+          : Number(
+              storedLastBlock
+            ),
+
+      blocks_behind:
+        0,
+
+      blocks_scanned:
+        0,
+
+      transactions_scanned:
+        0,
+
+      operations_scanned:
+        0,
+
+      census_operations:
+        0,
+
+      valid_census_operations:
+        0,
+
+      invalid_census_operations:
+        0,
+
+      set_operations:
+        0,
+
+      unset_operations:
+        0,
+
+      active_census_accounts:
+        Number(
+          countResult?.count || 0
+        )
     };
   }
 
-  const endBlock = Math.min(
-    irreversibleBlock,
-    startBlock +
+
+  const requestedEndBlock =
+    Math.min(
+      irreversibleBlock,
+      startBlock +
       requestedBlocks -
       1
-  );
+    );
+
 
   const stats = {
     blocks_scanned: 0,
@@ -332,48 +774,81 @@ async function scanHive(env, requestedBlocks) {
     unset_operations: 0
   };
 
+
+  let finalLastBlock =
+    startBlock - 1;
+
+
   // ----------------------------------------------------------
   // BLOCK BATCHES
   // ----------------------------------------------------------
+  //
+  // Każda paczka jest niezależna.
+  //
+  // Po jej prawidłowym przetworzeniu cursor jest natychmiast
+  // zapisywany do D1.
+  //
+  // Jeżeli Worker padnie podczas następnej paczki, po kolejnym
+  // uruchomieniu zacznie od ostatniego zapisanego miejsca.
+  // ----------------------------------------------------------
 
   for (
-    let batchStart = startBlock;
-    batchStart <= endBlock;
-    batchStart += BLOCK_BATCH_SIZE
+    let batchStart =
+      startBlock;
+
+    batchStart <=
+      requestedEndBlock;
+
+    batchStart +=
+      BLOCK_BATCH_SIZE
   ) {
-    const count = Math.min(
-      BLOCK_BATCH_SIZE,
-      endBlock -
+    const count =
+      Math.min(
+        BLOCK_BATCH_SIZE,
+        requestedEndBlock -
         batchStart +
         1
-    );
+      );
 
-    const response = await hiveRpc(
-      "block_api.get_block_range",
-      {
-        starting_block_num:
-          batchStart,
-        count
-      }
-    );
+    const response =
+      await hiveRpc(
+        "block_api.get_block_range",
+        {
+          starting_block_num:
+            batchStart,
+
+          count
+        }
+      );
 
     const blocks =
-      Array.isArray(response?.blocks)
+      Array.isArray(
+        response?.blocks
+      )
         ? response.blocks
         : [];
 
-    if (blocks.length === 0) {
+    if (
+      blocks.length === 0
+    ) {
       throw new Error(
         `Hive RPC returned no blocks starting at ${batchStart}.`
       );
     }
+
+
+    // --------------------------------------------------------
+    // PROCESS BATCH
+    // --------------------------------------------------------
 
     for (
       let i = 0;
       i < blocks.length;
       i++
     ) {
-      const block = blocks[i];
+      const block =
+        blocks[i];
+
       const blockNum =
         batchStart + i;
 
@@ -385,30 +860,94 @@ async function scanHive(env, requestedBlocks) {
       );
 
       stats.blocks_scanned++;
+
+      finalLastBlock =
+        blockNum;
     }
 
-    const actualLastBlock =
-      batchStart +
-      blocks.length -
-      1;
 
-    // Cursor zapisujemy dopiero po prawidłowym
-    // przetworzeniu całej paczki.
+    // --------------------------------------------------------
+    // SAVE CURSOR
+    // --------------------------------------------------------
+
     await setMeta(
       env.DB,
       "last_scanned_block",
-      String(actualLastBlock)
+      String(
+        finalLastBlock
+      )
     );
+
+    /*
+     * Dodatkowa diagnostyka.
+     */
+
+    await setMeta(
+      env.DB,
+      "last_batch_completed_at",
+      new Date().toISOString()
+    );
+
+    console.log(
+      "Hive Census batch completed:",
+      JSON.stringify({
+        batch_start:
+          batchStart,
+
+        batch_end:
+          finalLastBlock,
+
+        target_end:
+          requestedEndBlock
+      })
+    );
+
+
+    /*
+     * Jeżeli RPC zwróciło mniej bloków niż prosiliśmy,
+     * nie próbujemy przeskoczyć brakującego zakresu.
+     */
+
+    if (
+      blocks.length <
+      count
+    ) {
+      break;
+    }
   }
 
-  const finalLastBlock =
-    endBlock;
 
-  const blocksBehind = Math.max(
-    0,
-    irreversibleBlock -
+  // ----------------------------------------------------------
+  // CURRENT CHAIN STATE
+  // ----------------------------------------------------------
+  //
+  // Podczas dłuższego skanu Hive mógł wyprodukować nowe bloki.
+  // Dlatego po skanowaniu pobieramy aktualny LIB ponownie.
+  // ----------------------------------------------------------
+
+  const finalProps =
+    await hiveRpc(
+      "condenser_api.get_dynamic_global_properties",
+      []
+    );
+
+  const finalHeadBlock =
+    Number(
+      finalProps.head_block_number
+    );
+
+  const finalIrreversibleBlock =
+    Number(
+      finalProps.last_irreversible_block_num
+    );
+
+  const blocksBehind =
+    Math.max(
+      0,
+      finalIrreversibleBlock -
       finalLastBlock
-  );
+    );
+
 
   const countResult =
     await env.DB.prepare(`
@@ -416,24 +955,38 @@ async function scanHive(env, requestedBlocks) {
       FROM census_current
     `).first();
 
+
   return {
-    start_block: startBlock,
-    end_block: endBlock,
+    start_block:
+      startBlock,
+
+    end_block:
+      finalLastBlock,
+
+    requested_end_block:
+      requestedEndBlock,
+
     head_block_number:
-      headBlock,
+      finalHeadBlock,
+
     last_irreversible_block_num:
-      irreversibleBlock,
+      finalIrreversibleBlock,
+
     last_scanned_block:
       finalLastBlock,
+
     blocks_behind:
       blocksBehind,
+
     ...stats,
+
     active_census_accounts:
       Number(
         countResult?.count || 0
       )
   };
 }
+
 
 // ============================================================
 // BLOCK PROCESSING
@@ -446,41 +999,54 @@ async function processBlock(
   stats
 ) {
   const transactions =
-    Array.isArray(block?.transactions)
+    Array.isArray(
+      block?.transactions
+    )
       ? block.transactions
       : [];
 
   const transactionIds =
-    Array.isArray(block?.transaction_ids)
+    Array.isArray(
+      block?.transaction_ids
+    )
       ? block.transaction_ids
       : [];
 
   for (
     let txIndex = 0;
-    txIndex < transactions.length;
+    txIndex <
+      transactions.length;
     txIndex++
   ) {
     const tx =
-      transactions[txIndex];
+      transactions[
+        txIndex
+      ];
 
     stats.transactions_scanned++;
 
     const operations =
-      Array.isArray(tx?.operations)
+      Array.isArray(
+        tx?.operations
+      )
         ? tx.operations
         : [];
 
     const trxId =
-      transactionIds[txIndex] ||
-      null;
+      transactionIds[
+        txIndex
+      ] || null;
 
     for (
       let opIndex = 0;
-      opIndex < operations.length;
+      opIndex <
+        operations.length;
       opIndex++
     ) {
       const operation =
-        operations[opIndex];
+        operations[
+          opIndex
+        ];
 
       stats.operations_scanned++;
 
@@ -493,14 +1059,19 @@ async function processBlock(
         continue;
       }
 
-      if (parsed.id !== CENSUS_ID) {
+      if (
+        parsed.id !==
+        CENSUS_ID
+      ) {
         continue;
       }
 
       stats.census_operations++;
 
       const account =
-        getPostingAccount(parsed);
+        getPostingAccount(
+          parsed
+        );
 
       if (!account) {
         stats.invalid_census_operations++;
@@ -513,7 +1084,9 @@ async function processBlock(
         payload =
           typeof parsed.json ===
           "string"
-            ? JSON.parse(parsed.json)
+            ? JSON.parse(
+                parsed.json
+              )
             : parsed.json;
       } catch {
         stats.invalid_census_operations++;
@@ -529,11 +1102,15 @@ async function processBlock(
         continue;
       }
 
+
       // ------------------------------------------------------
       // SET
       // ------------------------------------------------------
 
-      if (payload.action === "set") {
+      if (
+        payload.action ===
+        "set"
+      ) {
         if (
           !isValidSetPayload(
             payload
@@ -557,11 +1134,15 @@ async function processBlock(
         continue;
       }
 
+
       // ------------------------------------------------------
       // UNSET
       // ------------------------------------------------------
 
-      if (payload.action === "unset") {
+      if (
+        payload.action ===
+        "unset"
+      ) {
         if (
           !isValidUnsetPayload(
             payload
@@ -583,10 +1164,12 @@ async function processBlock(
         continue;
       }
 
+
       stats.invalid_census_operations++;
     }
   }
 }
+
 
 // ============================================================
 // HIVE OPERATION PARSING
@@ -595,28 +1178,29 @@ async function processBlock(
 function parseCustomJsonOperation(
   operation
 ) {
-  // Legacy / condenser format:
-  //
-  // [
-  //   "custom_json",
-  //   { ... }
-  // ]
+  // Legacy / condenser format
 
   if (
-    Array.isArray(operation) &&
+    Array.isArray(
+      operation
+    ) &&
     operation.length === 2
   ) {
-    const [type, value] =
-      operation;
+    const [
+      type,
+      value
+    ] = operation;
 
     if (
       (
-        type === "custom_json" ||
+        type ===
+          "custom_json" ||
         type ===
           "custom_json_operation"
       ) &&
       value &&
-      typeof value === "object"
+      typeof value ===
+        "object"
     ) {
       return value;
     }
@@ -624,16 +1208,13 @@ function parseCustomJsonOperation(
     return null;
   }
 
-  // AppBase format:
-  //
-  // {
-  //   "type": "custom_json_operation",
-  //   "value": { ... }
-  // }
+
+  // AppBase format
 
   if (
     operation &&
-    typeof operation === "object" &&
+    typeof operation ===
+      "object" &&
     (
       operation.type ===
         "custom_json_operation" ||
@@ -650,21 +1231,28 @@ function parseCustomJsonOperation(
   return null;
 }
 
+
 // ============================================================
 // SIGNER
 // ============================================================
 
-function getPostingAccount(operation) {
+function getPostingAccount(
+  operation
+) {
   const posting =
     operation.required_posting_auths;
 
-  if (!Array.isArray(posting)) {
+  if (
+    !Array.isArray(
+      posting
+    )
+  ) {
     return null;
   }
 
-  // Hive Census v1:
-  // jedna deklaracja = jedno konto.
-  if (posting.length !== 1) {
+  if (
+    posting.length !== 1
+  ) {
     return null;
   }
 
@@ -672,7 +1260,8 @@ function getPostingAccount(operation) {
     posting[0];
 
   if (
-    typeof account !== "string" ||
+    typeof account !==
+      "string" ||
     account.trim() === ""
   ) {
     return null;
@@ -681,14 +1270,18 @@ function getPostingAccount(operation) {
   return account.trim();
 }
 
+
 // ============================================================
 // PROTOCOL v1 — SET VALIDATION
 // ============================================================
 
-function isValidSetPayload(payload) {
+function isValidSetPayload(
+  payload
+) {
   if (
     payload.v !== 1 ||
-    payload.action !== "set"
+    payload.action !==
+      "set"
   ) {
     return false;
   }
@@ -714,7 +1307,8 @@ function isValidSetPayload(payload) {
 
   if (
     payload.region !== null &&
-    payload.region !== undefined &&
+    payload.region !==
+      undefined &&
     typeof payload.region !==
       "string"
   ) {
@@ -742,7 +1336,9 @@ function isValidSetPayload(payload) {
   if (
     typeof payload.lat !==
       "number" ||
-    !Number.isFinite(payload.lat) ||
+    !Number.isFinite(
+      payload.lat
+    ) ||
     payload.lat < -90 ||
     payload.lat > 90
   ) {
@@ -752,7 +1348,9 @@ function isValidSetPayload(payload) {
   if (
     typeof payload.lon !==
       "number" ||
-    !Number.isFinite(payload.lon) ||
+    !Number.isFinite(
+      payload.lon
+    ) ||
     payload.lon < -180 ||
     payload.lon > 180
   ) {
@@ -762,17 +1360,22 @@ function isValidSetPayload(payload) {
   return true;
 }
 
+
 // ============================================================
 // PROTOCOL v1 — UNSET VALIDATION
 // ============================================================
 
-function isValidUnsetPayload(payload) {
+function isValidUnsetPayload(
+  payload
+) {
   return (
     payload &&
     payload.v === 1 &&
-    payload.action === "unset"
+    payload.action ===
+      "unset"
   );
 }
+
 
 // ============================================================
 // DATABASE — SET
@@ -846,6 +1449,7 @@ async function applySet(
     .run();
 }
 
+
 // ============================================================
 // DATABASE — UNSET
 // ============================================================
@@ -867,6 +1471,7 @@ async function applyUnset(
     .run();
 }
 
+
 // ============================================================
 // DATABASE — META
 // ============================================================
@@ -881,13 +1486,16 @@ async function getMeta(
       FROM census_meta
       WHERE key = ?
     `)
-      .bind(key)
+      .bind(
+        key
+      )
       .first();
 
   return row
     ? row.value
     : null;
 }
+
 
 async function setMeta(
   db,
@@ -908,10 +1516,77 @@ async function setMeta(
   `)
     .bind(
       key,
-      value
+      String(value)
     )
     .run();
 }
+
+
+// ============================================================
+// INDEXER ERROR DIAGNOSTICS
+// ============================================================
+
+async function recordIndexerError(
+  db,
+  error
+) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : String(error);
+
+  const now =
+    new Date().toISOString();
+
+  /*
+   * Nie chcemy, aby awaria samego zapisu diagnostyki
+   * przesłoniła pierwotny błąd indexera.
+   */
+
+  try {
+    await setMeta(
+      db,
+      "last_error",
+      message
+    );
+
+    await setMeta(
+      db,
+      "last_error_at",
+      now
+    );
+
+  } catch (
+    diagnosticError
+  ) {
+    console.error(
+      "Failed to record indexer error:",
+      diagnosticError
+    );
+  }
+}
+
+
+async function clearIndexerError(
+  db
+) {
+  /*
+   * Zachowujemy klucze w tabeli, ale czyścimy wartości.
+   */
+
+  await setMeta(
+    db,
+    "last_error",
+    ""
+  );
+
+  await setMeta(
+    db,
+    "last_error_at",
+    ""
+  );
+}
+
 
 // ============================================================
 // HIVE RPC
@@ -921,22 +1596,32 @@ async function hiveRpc(
   method,
   params
 ) {
-  const response = await fetch(
-    HIVE_RPC,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type":
-          "application/json"
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method,
-        params,
-        id: 1
-      })
-    }
-  );
+  const response =
+    await fetch(
+      HIVE_RPC,
+      {
+        method:
+          "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
+
+        body:
+          JSON.stringify({
+            jsonrpc:
+              "2.0",
+
+            method,
+
+            params,
+
+            id:
+              1
+          })
+      }
+    );
 
   if (!response.ok) {
     throw new Error(
@@ -956,7 +1641,8 @@ async function hiveRpc(
   }
 
   if (
-    data.result === undefined
+    data.result ===
+    undefined
   ) {
     throw new Error(
       `Hive RPC returned no result for ${method}.`
@@ -965,6 +1651,7 @@ async function hiveRpc(
 
   return data.result;
 }
+
 
 // ============================================================
 // HTTP HELPERS
@@ -982,9 +1669,11 @@ function json(
     ),
     {
       status,
+
       headers: {
         "Content-Type":
           "application/json; charset=utf-8",
+
         "Cache-Control":
           "no-store"
       }
@@ -992,12 +1681,19 @@ function json(
   );
 }
 
-function errorResponse(error) {
-  console.error(error);
+
+function errorResponse(
+  error
+) {
+  console.error(
+    error
+  );
 
   return json(
     {
-      ok: false,
+      ok:
+        false,
+
       error:
         error instanceof Error
           ? error.message
