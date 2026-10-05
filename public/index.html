@@ -285,6 +285,94 @@
         </div>
 
 
+        <!-- CURRENT CENSUS DECLARATION -->
+
+        <div
+          id="currentDeclaration"
+          class="selection hidden"
+          style="margin-top:16px"
+        >
+
+          <div class="mini">
+            CURRENT CENSUS DECLARATION
+          </div>
+
+          <div
+            id="currentDeclarationLocation"
+            style="margin-top:8px"
+          ></div>
+
+          <div
+            style="margin-top:14px"
+          >
+
+            <button
+              id="leaveCensusBtn"
+              type="button"
+              class="btn btn-dark"
+            >
+              Leave Census
+            </button>
+
+          </div>
+
+          <div
+            id="leaveCensusConfirm"
+            class="hidden"
+            style="margin-top:16px"
+          >
+
+            <div class="warning">
+
+              <strong>
+                Remove your current Census location?
+              </strong>
+
+              <p>
+                This will publish a new
+                <code>hive_census</code>
+                operation:
+              </p>
+
+              <pre>{"v":1,"action":"unset"}</pre>
+
+              <p>
+                Your account will disappear from the
+                current Census after the indexer processes
+                the operation. Previous declarations cannot
+                be deleted from the Hive blockchain.
+              </p>
+
+            </div>
+
+            <div
+              class="field-row"
+              style="margin-top:12px"
+            >
+
+              <button
+                id="cancelUnsetBtn"
+                type="button"
+                class="btn btn-dark"
+              >
+                Cancel
+              </button>
+
+              <button
+                id="publishUnsetBtn"
+                type="button"
+                class="btn btn-red"
+              >
+                Publish unset
+              </button>
+
+            </div>
+
+          </div>
+
+        </div>
+
+
         <hr>
 
 
