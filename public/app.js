@@ -7,8 +7,10 @@ let searchTimer = null;
 let searchController = null;
 let lastSearch = "";
 let publishing = false;
+let unsetting = false;
+let currentCensusRecords = [];
 
-const CENSUS_VERSION = "0.6.4";
+const CENSUS_VERSION = "0.6.5";
 const PROTOCOL_VERSION = 1;
 const CUSTOM_JSON_ID = "hive_census";
 const CENSUS_API = "/api/census";
@@ -98,19 +100,6 @@ function getKeychainProvider() {
 }
 
 
-function keychain() {
-  const detected = getKeychainProvider();
-
-  return detected
-    ? detected.provider
-    : null;
-}
-
-
-/*
- * KEYCHAIN BUTTON UI
- */
-
 function setKeychainButton(text, state = "normal") {
   const button = $("handshakeBtn");
 
@@ -128,10 +117,6 @@ function setKeychainButton(text, state = "normal") {
 }
 
 
-/*
- * KEYCHAIN DIAGNOSTIC
- */
-
 function checkKeychain(event) {
   if (event) {
     event.preventDefault();
@@ -146,18 +131,9 @@ function checkKeychain(event) {
     "Checking Hive Keychain…"
   );
 
-  console.log(
-    "Hive Census: Check Keychain clicked."
-  );
-
   setTimeout(() => {
     const diagnostic =
       inspectKeychain();
-
-    console.log(
-      "Hive Census Keychain diagnostic:",
-      diagnostic
-    );
 
     const detected =
       getKeychainProvider();
@@ -195,18 +171,7 @@ function checkKeychain(event) {
 
         setStatus(
           "Keychain API detected: " +
-          `${detected.name} · ` +
-          "Handshake=NO · Custom JSON=YES."
-        );
-      } else {
-        setKeychainButton(
-          "Keychain incomplete ✕"
-        );
-
-        setStatus(
-          "A possible Keychain object was detected, " +
-          "but neither requestHandshake nor requestCustomJson is available.",
-          true
+          `${detected.name} · Custom JSON=YES.`
         );
       }
 
@@ -225,21 +190,14 @@ function checkKeychain(event) {
       );
 
       setStatus(
-        "Hive Keychain handshake successful. " +
-        `${detected.name} · ` +
-        `Custom JSON=${hasCustomJson ? "YES" : "NO"}`
+        "Hive Keychain handshake successful."
       );
     };
 
     try {
       const result =
         kc.requestHandshake(
-          response => {
-            console.log(
-              "Hive Census handshake callback:",
-              response
-            );
-
+          () => {
             finishSuccess();
           }
         );
@@ -249,23 +207,13 @@ function checkKeychain(event) {
         typeof result.then === "function"
       ) {
         result
-          .then(response => {
-            console.log(
-              "Hive Census handshake promise:",
-              response
-            );
-
+          .then(() => {
             finishSuccess();
           })
-          .catch(error => {
+          .catch(() => {
             if (finished) return;
 
             finished = true;
-
-            console.error(
-              "Hive Census handshake promise error:",
-              error
-            );
 
             if (hasCustomJson) {
               setKeychainButton(
@@ -273,17 +221,7 @@ function checkKeychain(event) {
               );
 
               setStatus(
-                "Keychain API detected. " +
-                "Handshake returned an error, but Custom JSON=YES."
-              );
-            } else {
-              setKeychainButton(
-                "Handshake failed ✕"
-              );
-
-              setStatus(
-                "Keychain API was detected, but handshake failed.",
-                true
+                "Keychain API detected. Custom JSON=YES."
               );
             }
           });
@@ -300,18 +238,7 @@ function checkKeychain(event) {
           );
 
           setStatus(
-            "Keychain API detected, but the handshake did not return. " +
-            `${detected.name} · Custom JSON=YES.`
-          );
-        } else {
-          setKeychainButton(
-            "Handshake no response"
-          );
-
-          setStatus(
-            "Keychain API detected, but the handshake did not return " +
-            "and requestCustomJson is unavailable.",
-            true
+            "Keychain API detected. Custom JSON=YES."
           );
         }
       }, 3000);
@@ -319,19 +246,13 @@ function checkKeychain(event) {
     } catch (error) {
       finished = true;
 
-      console.error(
-        "Hive Census Keychain handshake error:",
-        error
-      );
-
       if (hasCustomJson) {
         setKeychainButton(
           "Keychain API detected ✓"
         );
 
         setStatus(
-          "Keychain API detected. " +
-          "Handshake produced an error, but Custom JSON=YES."
+          "Keychain API detected. Custom JSON=YES."
         );
       } else {
         setKeychainButton(
@@ -339,12 +260,7 @@ function checkKeychain(event) {
         );
 
         setStatus(
-          "Keychain handshake error: " +
-          (
-            error && error.message
-              ? error.message
-              : String(error)
-          ),
+          "Keychain error.",
           true
         );
       }
@@ -407,8 +323,394 @@ function validHiveAccountName(account) {
 
 $("account").addEventListener(
   "input",
-  updatePublishButton
+  () => {
+    updatePublishButton();
+    updateCurrentDeclaration();
+  }
 );
+
+
+/*
+ * CURRENT DECLARATION
+ */
+
+function findCurrentDeclaration(
+  account
+) {
+  if (
+    !account ||
+    !Array.isArray(
+      currentCensusRecords
+    )
+  ) {
+    return null;
+  }
+
+  return (
+    currentCensusRecords.find(
+      record =>
+        String(
+          record.account || ""
+        ).toLowerCase() ===
+        account.toLowerCase()
+    ) || null
+  );
+}
+
+
+function updateCurrentDeclaration() {
+  const panel =
+    $("currentDeclaration");
+
+  const location =
+    $("currentDeclarationLocation");
+
+  const confirmation =
+    $("leaveCensusConfirm");
+
+  if (
+    !panel ||
+    !location
+  ) {
+    return;
+  }
+
+  const account =
+    getAccount();
+
+  if (
+    !validHiveAccountName(
+      account
+    )
+  ) {
+    panel.classList.add(
+      "hidden"
+    );
+
+    if (confirmation) {
+      confirmation.classList.add(
+        "hidden"
+      );
+    }
+
+    return;
+  }
+
+  const record =
+    findCurrentDeclaration(
+      account
+    );
+
+  if (!record) {
+    panel.classList.add(
+      "hidden"
+    );
+
+    if (confirmation) {
+      confirmation.classList.add(
+        "hidden"
+      );
+    }
+
+    return;
+  }
+
+  const parts = [
+    record.city,
+    record.region_name,
+    record.country_name
+  ].filter(Boolean);
+
+  location.innerHTML =
+    `<strong>${escapeHtml(
+      parts.join(", ")
+    )}</strong>` +
+    `<br>` +
+    `<span class="muted">` +
+    `@${escapeHtml(
+      record.account
+    )} is currently included in the Census.` +
+    `</span>`;
+
+  panel.classList.remove(
+    "hidden"
+  );
+
+  if (
+    confirmation &&
+    !unsetting
+  ) {
+    confirmation.classList.add(
+      "hidden"
+    );
+  }
+}
+
+
+/*
+ * LEAVE CENSUS UI
+ */
+
+const leaveCensusButton =
+  $("leaveCensusBtn");
+
+if (leaveCensusButton) {
+  leaveCensusButton.onclick =
+    () => {
+      const confirmation =
+        $("leaveCensusConfirm");
+
+      if (confirmation) {
+        confirmation.classList.remove(
+          "hidden"
+        );
+      }
+    };
+}
+
+
+const cancelUnsetButton =
+  $("cancelUnsetBtn");
+
+if (cancelUnsetButton) {
+  cancelUnsetButton.onclick =
+    () => {
+      const confirmation =
+        $("leaveCensusConfirm");
+
+      if (confirmation) {
+        confirmation.classList.add(
+          "hidden"
+        );
+      }
+    };
+}
+
+
+/*
+ * UNSET PAYLOAD
+ */
+
+function censusUnsetPayload() {
+  return {
+    v:
+      PROTOCOL_VERSION,
+
+    action:
+      "unset"
+  };
+}
+
+
+/*
+ * PUBLISH UNSET
+ */
+
+const publishUnsetButton =
+  $("publishUnsetBtn");
+
+if (publishUnsetButton) {
+  publishUnsetButton.onclick =
+    () => {
+      if (unsetting) {
+        return;
+      }
+
+      const account =
+        getAccount();
+
+      if (
+        !validHiveAccountName(
+          account
+        )
+      ) {
+        setStatus(
+          "Enter a valid Hive account.",
+          true
+        );
+
+        return;
+      }
+
+      const current =
+        findCurrentDeclaration(
+          account
+        );
+
+      if (!current) {
+        setStatus(
+          "This account has no active Census declaration.",
+          true
+        );
+
+        updateCurrentDeclaration();
+
+        return;
+      }
+
+      const detected =
+        getKeychainProvider();
+
+      if (!detected) {
+        setStatus(
+          "No compatible Hive Keychain API detected.",
+          true
+        );
+
+        return;
+      }
+
+      const kc =
+        detected.provider;
+
+      if (
+        typeof kc.requestCustomJson !==
+        "function"
+      ) {
+        setStatus(
+          "Keychain was detected, but requestCustomJson is unavailable.",
+          true
+        );
+
+        return;
+      }
+
+      const json =
+        JSON.stringify(
+          censusUnsetPayload()
+        );
+
+      unsetting = true;
+
+      publishUnsetButton.disabled =
+        true;
+
+      publishUnsetButton.textContent =
+        "Waiting for Keychain…";
+
+      setStatus(
+        "Waiting for approval in Hive Keychain…"
+      );
+
+      try {
+        kc.requestCustomJson(
+          account,
+          CUSTOM_JSON_ID,
+          "Posting",
+          json,
+          "Leave Hive Census",
+          response => {
+            unsetting = false;
+
+            publishUnsetButton.disabled =
+              false;
+
+            publishUnsetButton.textContent =
+              "Publish unset";
+
+            console.log(
+              "Hive Census unset response:",
+              response
+            );
+
+            if (
+              response &&
+              response.success
+            ) {
+              setStatus(
+                "Unset published successfully. " +
+                "Your account will disappear from the current Census after the indexer processes the new Hive block."
+              );
+
+              const confirmation =
+                $("leaveCensusConfirm");
+
+              if (confirmation) {
+                confirmation.classList.add(
+                  "hidden"
+                );
+              }
+
+              /*
+               * The API may not have indexed the
+               * operation after only ten seconds,
+               * but refreshing here is harmless.
+               */
+
+              setTimeout(
+                loadCensusMap,
+                10000
+              );
+
+              return;
+            }
+
+            let error =
+              "The operation was cancelled or rejected.";
+
+            if (response) {
+              if (
+                typeof response.message ===
+                "string"
+              ) {
+                error =
+                  response.message;
+              } else if (
+                typeof response.error ===
+                "string"
+              ) {
+                error =
+                  response.error;
+              } else if (
+                response.error
+              ) {
+                try {
+                  error =
+                    JSON.stringify(
+                      response.error
+                    );
+                } catch (_) {
+                  error =
+                    String(
+                      response.error
+                    );
+                }
+              }
+            }
+
+            setStatus(
+              `Publishing unset failed: ${error}`,
+              true
+            );
+          }
+        );
+
+      } catch (error) {
+        unsetting = false;
+
+        publishUnsetButton.disabled =
+          false;
+
+        publishUnsetButton.textContent =
+          "Publish unset";
+
+        console.error(
+          error
+        );
+
+        setStatus(
+          "Publishing unset failed: " +
+          (
+            error &&
+            error.message
+              ? error.message
+              : String(error)
+          ),
+          true
+        );
+      }
+    };
+}
 
 
 /*
@@ -679,21 +981,6 @@ function isLocalityResult(
 }
 
 
-/*
- * CANONICAL LOCALITY NAME
- *
- * Important rule:
- *
- * A restaurant, hotel, shop, building, road or other
- * point of interest must NEVER become the Census city.
- *
- * For non-locality search results we always use the
- * locality from the address hierarchy.
- *
- * Only a genuine Nominatim place result may supply
- * its own object name as the canonical locality name.
- */
-
 function getCanonicalLocalityName(
   place,
   addressLocality,
@@ -709,13 +996,6 @@ function getCanonicalLocalityName(
 
   const namedetails =
     place.namedetails || {};
-
-  /*
-   * Prefer the country's own language name when
-   * Nominatim supplies one.
-   *
-   * For Poland this means name:pl.
-   */
 
   const localLanguageKey =
     countryCode
@@ -774,14 +1054,6 @@ function normalizePlace(
     a.country_code
       ? a.country_code.toUpperCase()
       : null;
-
-  /*
-   * Census requires an actual locality.
-   *
-   * If Nominatim cannot associate the result
-   * with a city/town/village/hamlet, we do not
-   * offer it as a Census location.
-   */
 
   if (
     !addressLocality ||
@@ -842,12 +1114,6 @@ function normalizePlace(
       city
     );
 
-  /*
-   * Address locality remains searchable even when
-   * the genuine place object has a more complete
-   * canonical name.
-   */
-
   if (
     normalizeText(
       addressLocality
@@ -868,11 +1134,6 @@ function normalizePlace(
       searchNames
     );
 
-  /*
-   * Genuine locality results should rank above POIs
-   * that merely happen to be located in that locality.
-   */
-
   const localityBonus =
     localityResult
       ? 200
@@ -883,12 +1144,6 @@ function normalizePlace(
     regionName,
     countryName
   ].filter(Boolean);
-
-  /*
-   * If the user found the locality through a POI,
-   * retain that information for display only.
-   * It is never written into the Census payload.
-   */
 
   let foundVia =
     match.name;
@@ -1255,9 +1510,6 @@ function normalizeText(
 
 /*
  * DEDUPLICATION
- *
- * POIs inside the same locality should not create
- * multiple identical Census choices.
  */
 
 function deduplicatePlaces(
@@ -1574,7 +1826,7 @@ function clearSelection() {
 
 
 /*
- * PROTOCOL v1.0 PAYLOAD
+ * SET PAYLOAD
  */
 
 function censusPayload() {
@@ -1618,7 +1870,7 @@ function censusPayload() {
 
 
 /*
- * BROADCAST
+ * PUBLISH SET
  */
 
 $("publishBtn").onclick =
@@ -1694,11 +1946,6 @@ $("publishBtn").onclick =
       return;
     }
 
-    const json =
-      JSON.stringify(
-        payload
-      );
-
     publishing = true;
 
     updatePublishButton();
@@ -1712,17 +1959,14 @@ $("publishBtn").onclick =
         account,
         CUSTOM_JSON_ID,
         "Posting",
-        json,
+        JSON.stringify(
+          payload
+        ),
         "Publish Hive Census location",
         response => {
           publishing = false;
 
           updatePublishButton();
-
-          console.log(
-            "Hive Census Keychain response:",
-            response
-          );
 
           if (
             response &&
@@ -1744,34 +1988,20 @@ $("publishBtn").onclick =
           let error =
             "The operation was cancelled or rejected.";
 
-          if (response) {
-            if (
-              typeof response.message ===
+          if (
+            response &&
+            typeof response.message ===
               "string"
-            ) {
-              error =
-                response.message;
-            } else if (
-              typeof response.error ===
+          ) {
+            error =
+              response.message;
+          } else if (
+            response &&
+            typeof response.error ===
               "string"
-            ) {
-              error =
-                response.error;
-            } else if (
-              response.error
-            ) {
-              try {
-                error =
-                  JSON.stringify(
-                    response.error
-                  );
-              } catch (_) {
-                error =
-                  String(
-                    response.error
-                  );
-              }
-            }
+          ) {
+            error =
+              response.error;
           }
 
           setStatus(
@@ -1785,10 +2015,6 @@ $("publishBtn").onclick =
       publishing = false;
 
       updatePublishButton();
-
-      console.error(
-        error
-      );
 
       setStatus(
         "Publishing failed: " +
@@ -1805,23 +2031,7 @@ $("publishBtn").onclick =
 
 
 /*
- * ============================================================
- * GLOBAL HIVE CENSUS READER
- * ============================================================
- *
- * v0.6.4
- *
- * Current active state is loaded from /api/census.
- *
- * Multiple Hive accounts declaring the same locality
- * are represented by one locality marker.
- *
- * Hive remains the source of truth.
- */
-
-
-/*
- * REMOVE EXISTING CENSUS MARKERS
+ * CENSUS MAP
  */
 
 function clearCensusMarkers() {
@@ -1837,10 +2047,6 @@ function clearCensusMarkers() {
   censusMarkers = [];
 }
 
-
-/*
- * VALIDATE API RECORD
- */
 
 function validCensusApiRecord(
   record
@@ -1886,9 +2092,7 @@ function validCensusApiRecord(
     typeof record.lat !== "number" ||
     !Number.isFinite(
       record.lat
-    ) ||
-    record.lat < -90 ||
-    record.lat > 90
+    )
   ) {
     return false;
   }
@@ -1897,9 +2101,7 @@ function validCensusApiRecord(
     typeof record.lon !== "number" ||
     !Number.isFinite(
       record.lon
-    ) ||
-    record.lon < -180 ||
-    record.lon > 180
+    )
   ) {
     return false;
   }
@@ -1907,10 +2109,6 @@ function validCensusApiRecord(
   return true;
 }
 
-
-/*
- * GROUP RECORDS BY LOCALITY
- */
 
 function censusLocalityKey(
   record
@@ -2007,29 +2205,9 @@ function groupCensusByLocality(
 }
 
 
-/*
- * CREATE LOCALITY MARKER
- */
-
 function addCensusLocalityMarker(
   locality
 ) {
-  if (
-    !locality ||
-    !Number.isFinite(
-      locality.lat
-    ) ||
-    !Number.isFinite(
-      locality.lon
-    ) ||
-    !Array.isArray(
-      locality.accounts
-    ) ||
-    locality.accounts.length === 0
-  ) {
-    return null;
-  }
-
   const locationParts = [
     locality.city,
     locality.region_name,
@@ -2082,14 +2260,8 @@ function addCensusLocalityMarker(
   censusMarkers.push(
     marker
   );
-
-  return marker;
 }
 
-
-/*
- * UPDATE PUBLIC CENSUS COUNTER
- */
 
 function updateCensusStats(
   userCount,
@@ -2102,31 +2274,13 @@ function updateCensusStats(
     return;
   }
 
-  const userLabel =
-    userCount === 1
-      ? "user"
-      : "users";
-
-  const localityLabel =
-    localityCount === 1
-      ? "locality"
-      : "localities";
-
   stats.textContent =
-    `${userCount} ${userLabel} · ` +
-    `${localityCount} ${localityLabel}`;
+    `${userCount} ${userCount === 1 ? "user" : "users"} · ` +
+    `${localityCount} ${localityCount === 1 ? "locality" : "localities"}`;
 }
 
 
-/*
- * LOAD GLOBAL CENSUS MAP
- */
-
 async function loadCensusMap() {
-  console.log(
-    `Hive Census v${CENSUS_VERSION}: loading global Census index…`
-  );
-
   try {
     const response =
       await fetch(
@@ -2162,28 +2316,23 @@ async function loadCensusMap() {
       )
     ) {
       throw new Error(
-        "Census API returned an invalid response."
+        "Invalid Census API response."
       );
     }
 
     const activeRecords =
       data.census.filter(
-        record => {
-          const valid =
-            validCensusApiRecord(
-              record
-            );
-
-          if (!valid) {
-            console.warn(
-              "Hive Census: invalid API record ignored:",
-              record
-            );
-          }
-
-          return valid;
-        }
+        validCensusApiRecord
       );
+
+    /*
+     * Keep current active state locally so the
+     * account field can immediately show whether
+     * that account is already in Census.
+     */
+
+    currentCensusRecords =
+      activeRecords;
 
     const localities =
       groupCensusByLocality(
@@ -2194,6 +2343,8 @@ async function loadCensusMap() {
       activeRecords.length,
       localities.length
     );
+
+    updateCurrentDeclaration();
 
     clearCensusMarkers();
 
@@ -2209,13 +2360,10 @@ async function loadCensusMap() {
     if (
       localities.length === 1
     ) {
-      const locality =
-        localities[0];
-
       map.setView(
         [
-          locality.lat,
-          locality.lon
+          localities[0].lat,
+          localities[0].lon
         ],
         9
       );
@@ -2246,11 +2394,6 @@ async function loadCensusMap() {
       );
     }
 
-    console.log(
-      `Hive Census: ${activeRecords.length} active declaration(s) ` +
-      `in ${localities.length} locality/localities loaded.`
-    );
-
     return {
       records:
         activeRecords,
@@ -2260,7 +2403,7 @@ async function loadCensusMap() {
 
   } catch (error) {
     console.error(
-      "Hive Census: failed to load global Census index:",
+      "Hive Census: failed to load Census:",
       error
     );
 
@@ -2273,11 +2416,8 @@ async function loadCensusMap() {
     }
 
     return {
-      records:
-        [],
-
-      localities:
-        []
+      records: [],
+      localities: []
     };
   }
 }
@@ -2346,10 +2486,5 @@ updatePublishButton();
 console.log(
   `Hive Census app.js v${CENSUS_VERSION} loaded`
 );
-
-
-/*
- * LOAD GLOBAL CENSUS DATA
- */
 
 loadCensusMap();
