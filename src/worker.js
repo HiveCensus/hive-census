@@ -7,7 +7,7 @@ import {
 const HIVE_RPC = "https://api.hive.blog";
 const CENSUS_ID = "hive_census";
 const PROTOCOL_VERSION = 1;
-const VERSION = "0.9.1";
+const VERSION = "0.9.2";
 
 const DEFAULT_MANUAL_SCAN_BLOCKS = 500;
 const MAX_MANUAL_SCAN_BLOCKS = 1000;
@@ -152,10 +152,7 @@ export default {
             )
           : DEFAULT_MANUAL_SCAN_BLOCKS;
 
-        const result = await scanHive(
-          env,
-          blocks
-        );
+        const result = await scanHive(env, blocks);
 
         await setMeta(
           env,
@@ -301,44 +298,60 @@ export default {
 };
 
 // ============================================================
-// SCHEDULED JOBS
+// SCHEDULED JOBS — INDEPENDENT EXECUTION
 // ============================================================
 
 async function runScheduledJobs(env) {
-  // Priority 1: Official Hive Census indexer.
-  try {
-    await runScheduledIndexer(env);
-  } catch (error) {
-    console.error(
-      "Census scheduled indexer failed:",
-      error
-    );
-  }
+  const jobs = [
+    {
+      name: "census",
+      run: () => runScheduledIndexer(env)
+    },
+    {
+      name: "classifier",
+      run: () => runScheduledLocationClassifier(env)
+    },
+    {
+      name: "profiles",
+      run: () => runScheduledProfileImporter(env)
+    }
+  ];
 
-  // Priority 2: Location classification.
-  // Runs before the potentially long profile importer.
-  try {
-    await runScheduledLocationClassifier(env);
-  } catch (error) {
-    console.error(
-      "Location classifier failed:",
-      error
-    );
-  }
+  const results = await Promise.allSettled(
+    jobs.map(async (job) => {
+      console.log(
+        `[Cron] Starting ${job.name}`
+      );
 
-  // Priority 3: Hive profile importer.
-  try {
-    await runScheduledProfileImporter(env);
-  } catch (error) {
-    console.error(
-      "Profile importer failed:",
-      error
-    );
+      try {
+        await job.run();
+
+        console.log(
+          `[Cron] Completed ${job.name}`
+        );
+      } catch (error) {
+        console.error(
+          `[Cron] Failed ${job.name}:`,
+          error
+        );
+
+        throw error;
+      }
+    })
+  );
+
+  for (let i = 0; i < results.length; i++) {
+    if (results[i].status === "rejected") {
+      console.error(
+        `[Cron] ${jobs[i].name} rejected:`,
+        results[i].reason
+      );
+    }
   }
 }
 
 // ============================================================
-// EXISTING CENSUS INDEXER
+// CENSUS INDEXER
 // ============================================================
 
 async function runScheduledIndexer(env) {
@@ -1248,68 +1261,85 @@ async function saveProfileLocation(
 // ============================================================
 
 async function runScheduledLocationClassifier(env) {
-  const startedAt =
-    new Date().toISOString();
-
-  // Diagnostic marker written before processing.
-  await setProfileMeta(
-    env,
-    "last_classifier_started",
-    startedAt
-  );
+  const startedAt = new Date().toISOString();
 
   try {
-    const result =
-      await classifyPendingLocations(
-        env,
-        LOCATION_CLASSIFY_PER_RUN
-      );
-
     await setProfileMeta(
       env,
-      "last_classifier_run",
-      new Date().toISOString()
+      "last_classifier_started",
+      startedAt
     );
 
-    await setProfileMeta(
+    const result = await classifyPendingLocations(
       env,
-      "last_classifier_processed",
-      String(result.processed)
+      LOCATION_CLASSIFY_PER_RUN
     );
 
-    await setProfileMeta(
-      env,
-      "last_classifier_matched",
-      String(result.matched)
-    );
+    const finishedAt = new Date().toISOString();
 
-    await setProfileMeta(
-      env,
-      "last_classifier_ambiguous",
-      String(result.ambiguous)
-    );
+    await env.DB.batch([
+      env.DB.prepare(`
+        INSERT INTO profile_import_meta (key, value)
+        VALUES ('last_classifier_run', ?)
+        ON CONFLICT(key)
+        DO UPDATE SET value = excluded.value
+      `).bind(finishedAt),
 
-    await setProfileMeta(
-      env,
-      "last_classifier_rejected",
-      String(result.rejected)
-    );
+      env.DB.prepare(`
+        INSERT INTO profile_import_meta (key, value)
+        VALUES ('last_classifier_processed', ?)
+        ON CONFLICT(key)
+        DO UPDATE SET value = excluded.value
+      `).bind(String(result.processed)),
 
-    await setProfileMeta(
-      env,
-      "last_classifier_error",
-      ""
-    );
+      env.DB.prepare(`
+        INSERT INTO profile_import_meta (key, value)
+        VALUES ('last_classifier_matched', ?)
+        ON CONFLICT(key)
+        DO UPDATE SET value = excluded.value
+      `).bind(String(result.matched)),
+
+      env.DB.prepare(`
+        INSERT INTO profile_import_meta (key, value)
+        VALUES ('last_classifier_ambiguous', ?)
+        ON CONFLICT(key)
+        DO UPDATE SET value = excluded.value
+      `).bind(String(result.ambiguous)),
+
+      env.DB.prepare(`
+        INSERT INTO profile_import_meta (key, value)
+        VALUES ('last_classifier_rejected', ?)
+        ON CONFLICT(key)
+        DO UPDATE SET value = excluded.value
+      `).bind(String(result.rejected)),
+
+      env.DB.prepare(`
+        INSERT INTO profile_import_meta (key, value)
+        VALUES ('last_classifier_error', '')
+        ON CONFLICT(key)
+        DO UPDATE SET value = excluded.value
+      `)
+    ]);
 
     return result;
   } catch (error) {
-    await setProfileMeta(
-      env,
-      "last_classifier_error",
-      String(
-        error?.message || error
-      )
+    console.error(
+      "[Classifier] Execution failed:",
+      error
     );
+
+    try {
+      await setProfileMeta(
+        env,
+        "last_classifier_error",
+        String(error?.message || error)
+      );
+    } catch (metadataError) {
+      console.error(
+        "[Classifier] Cannot save error:",
+        metadataError
+      );
+    }
 
     throw error;
   }
@@ -1701,8 +1731,8 @@ async function getMeta(
       FROM census_meta
       WHERE key = ?
     `).bind(
-      key
-    ).first();
+    key
+  ).first();
 
   return row?.value ?? "";
 }
@@ -1761,8 +1791,8 @@ async function getProfileMeta(
       FROM profile_import_meta
       WHERE key = ?
     `).bind(
-      key
-    ).first();
+    key
+  ).first();
 
   return row?.value ?? fallback;
 }
