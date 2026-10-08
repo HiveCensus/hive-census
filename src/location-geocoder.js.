@@ -1,0 +1,305 @@
+
+/**
+ * Hive Profile Map — Geocoder
+ * Version: 0.1.0
+ *
+ * Evaluates geographic search results.
+ *
+ * This module does not call an external API.
+ * It accepts candidate results supplied by a geocoding provider.
+ *
+ * Important:
+ * - Never infer a user's exact residence.
+ * - Preserve the original profile.location.
+ * - Country-only declarations use country_proxy.
+ * - Region-only declarations use region_proxy.
+ * - Ambiguous results require review.
+ */
+
+const VERSION = "0.1.0";
+
+const MIN_CONFIDENCE = 0.85;
+const MIN_SCORE_MARGIN = 0.15;
+
+const COUNTRY_TYPES = new Set([
+  "country"
+]);
+
+const REGION_TYPES = new Set([
+  "state",
+  "province",
+  "region",
+  "administrative"
+]);
+
+const LOCALITY_TYPES = new Set([
+  "city",
+  "town",
+  "village",
+  "municipality",
+  "hamlet"
+]);
+
+const NON_GEOGRAPHIC_PATTERNS = [
+  /\bdigital nomad\b/i,
+  /\beverywhere\b/i,
+  /\banywhere\b/i,
+  /\bplanet earth\b/i,
+  /\bcrypto(?:tab)?\b/i,
+  /\bmetaverse\b/i,
+  /\bvirtual world\b/i
+];
+
+export function getGeocoderVersion() {
+  return VERSION;
+}
+
+export function normalizeGeocoderQuery(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value
+    .normalize("NFKC")
+    .trim()
+    .replace(/[_]+/g, " ")
+    .replace(/\s*,\s*/g, ", ")
+    .replace(/\s+/g, " ")
+    .slice(0, 500);
+}
+
+export function isNonGeographicLocation(value) {
+  const normalized = normalizeGeocoderQuery(value);
+
+  if (!normalized) {
+    return true;
+  }
+
+  return NON_GEOGRAPHIC_PATTERNS.some(
+    pattern => pattern.test(normalized)
+  );
+}
+
+function normalizeText(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .toLocaleLowerCase("en-US")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function getLocationType(candidate) {
+  const type = normalizeText(
+    candidate.type || candidate.addresstype
+  );
+
+  if (COUNTRY_TYPES.has(type)) {
+    return "country_proxy";
+  }
+
+  if (REGION_TYPES.has(type)) {
+    return "region_proxy";
+  }
+
+  if (LOCALITY_TYPES.has(type)) {
+    return "locality";
+  }
+
+  return null;
+}
+
+function validCoordinates(candidate) {
+  const lat = Number(candidate.lat);
+  const lon = Number(candidate.lon);
+
+  return (
+    candidate.lat !== null &&
+    candidate.lat !== undefined &&
+    candidate.lon !== null &&
+    candidate.lon !== undefined &&
+    Number.isFinite(lat) &&
+    Number.isFinite(lon) &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lon >= -180 &&
+    lon <= 180
+  );
+}
+
+function getCandidateNames(candidate) {
+  const address = candidate.address || {};
+
+  return [
+    candidate.name,
+    candidate.display_name,
+    address.city,
+    address.town,
+    address.village,
+    address.municipality,
+    address.state,
+    address.province,
+    address.region,
+    address.country
+  ]
+    .filter(Boolean)
+    .map(normalizeText);
+}
+
+function calculateScore(query, candidate) {
+  const normalizedQuery = normalizeText(query);
+  const names = getCandidateNames(candidate);
+
+  if (!normalizedQuery || names.length === 0) {
+    return 0;
+  }
+
+  if (names.includes(normalizedQuery)) {
+    return 1;
+  }
+
+  const parts = normalizedQuery
+    .split(" ")
+    .filter(Boolean);
+
+  if (!parts.length) {
+    return 0;
+  }
+
+  const candidateText = names.join(" ");
+
+  const matchedParts = parts.filter(
+    part => candidateText.split(" ").includes(part)
+  ).length;
+
+  const coverage = matchedParts / parts.length;
+
+  if (coverage === 1) {
+    return 0.9;
+  }
+
+  return Math.min(0.8, coverage * 0.8);
+}
+
+function normalizeCandidate(candidate) {
+  const address = candidate.address || {};
+
+  return {
+    location_type: getLocationType(candidate),
+    country: (
+      address.country_code || ""
+    ).toUpperCase() || null,
+    country_name: address.country || null,
+    region:
+      address.state_code ||
+      address.region_code ||
+      null,
+    region_name:
+      address.state ||
+      address.province ||
+      address.region ||
+      null,
+    city:
+      address.city ||
+      address.town ||
+      address.village ||
+      address.municipality ||
+      candidate.name ||
+      null,
+    lat: Number(candidate.lat),
+    lon: Number(candidate.lon),
+    source:
+      candidate.source || "external_geocoder"
+  };
+}
+
+function ambiguous(reason, candidates = []) {
+  return {
+    status: "ambiguous",
+    location_type: null,
+    country: null,
+    country_name: null,
+    region: null,
+    region_name: null,
+    city: null,
+    lat: null,
+    lon: null,
+    confidence: null,
+    source: "geocoder_v1",
+    reason,
+    candidates_considered: candidates.length
+  };
+}
+
+/**
+ * Evaluate candidates supplied by a geocoding provider.
+ *
+ * @param {string} rawLocation
+ * @param {Array<object>} candidates
+ * @returns {object}
+ */
+export function evaluateGeocoderResults(
+  rawLocation,
+  candidates
+) {
+  const query = normalizeGeocoderQuery(rawLocation);
+
+  if (!query) {
+    return {
+      ...ambiguous("empty_location"),
+      status: "rejected"
+    };
+  }
+
+  if (isNonGeographicLocation(query)) {
+    return {
+      ...ambiguous("non_geographic_location"),
+      status: "rejected"
+    };
+  }
+
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return ambiguous("no_candidates");
+  }
+
+  const evaluated = candidates
+    .filter(candidate =>
+      candidate &&
+      typeof candidate === "object" &&
+      validCoordinates(candidate) &&
+      getLocationType(candidate)
+    )
+    .map(candidate => ({
+      candidate,
+      score: calculateScore(query, candidate)
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  if (!evaluated.length) {
+    return ambiguous("no_valid_candidates", candidates);
+  }
+
+  const best = evaluated[0];
+  const second = evaluated[1];
+
+  if (best.score < MIN_CONFIDENCE) {
+    return ambiguous("low_confidence", candidates);
+  }
+
+  if (
+    second &&
+    best.score - second.score < MIN_SCORE_MARGIN
+  ) {
+    return ambiguous("multiple_similar_candidates", candidates);
+  }
+
+  const location = normalizeCandidate(best.candidate);
+
+  return {
+    status: "matched",
+    ...location,
+    confidence: best.score,
+    reason: "automatic_geocoder_match",
+    candidates_considered: candidates.length
+  };
+}
