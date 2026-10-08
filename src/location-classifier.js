@@ -1,7 +1,7 @@
 
 /**
  * Hive Census — Hive Profile Map
- * Location classifier v0.1.0
+ * Location classifier v0.1.1
  *
  * Classifies public Hive profile.location values.
  *
@@ -12,7 +12,15 @@
  * - Ambiguous and non-geographic values are not geocoded.
  * - This module does not modify the original profile.location.
  * - No external geocoding requests are performed.
+ *
+ * v0.1.1:
+ * - Expanded non-geographic dictionary.
+ * - Added conservative geographic aliases.
+ * - Added Califonia -> California alias.
+ * - Preserved all v0.1.0 country, city and region entries.
  */
+
+const VERSION = "0.1.1";
 
 const COUNTRY_DATA = [
   // [ISO 3166-1 alpha-2, country, capital, latitude, longitude, aliases]
@@ -105,13 +113,30 @@ const LOCALITIES = [
 const REGIONS = [
   ["Aceh", "ID", "Indonesia", "Banda Aceh",
     5.5483, 95.3238,
-    ["aceh-indonesia", "aceh. indonesia", "aceh, indonesia"]],
+    [
+      "aceh-indonesia",
+      "aceh. indonesia",
+      "aceh, indonesia",
+      "aceh indonesia"
+    ]],
   ["Silesia", "PL", "Poland", "Katowice",
     50.2649, 19.0238,
-    ["śląsk", "slask", "silesia, poland"]],
+    [
+      "śląsk",
+      "slask",
+      "silesia, poland",
+      "silesia poland"
+    ]],
   ["California", "US", "United States", "Sacramento",
     38.5816, -121.4944,
-    ["california, usa", "california, us"]]
+    [
+      "california, usa",
+      "california, us",
+      "california, united states",
+      "califonia",
+      "califonia, usa",
+      "califonia, us"
+    ]]
 ];
 
 const NON_GEOGRAPHIC = new Set([
@@ -128,6 +153,12 @@ const NON_GEOGRAPHIC = new Set([
   "internet",
   "metaverse",
   "universe",
+  "galaxy",
+  "the galaxy",
+  "steemit",
+  "international",
+  "digital nomad",
+  "virtual world",
   "crypto",
   "btc earn cryptotab browser"
 ]);
@@ -191,6 +222,7 @@ const countryAliases = new Map();
 
 for (const row of COUNTRY_DATA) {
   const [code, name, , , , aliases] = row;
+
   for (const alias of [name, ...aliases]) {
     countryAliases.set(normalize(alias), code);
   }
@@ -201,9 +233,14 @@ const localityAliases = new Map();
 for (const row of LOCALITIES) {
   const [name, code, region, lat, lon, aliases] = row;
   const country = countriesByCode.get(code);
+
   for (const alias of [name, ...aliases]) {
     localityAliases.set(normalize(alias), {
-      name, code, region, lat, lon,
+      name,
+      code,
+      region,
+      lat,
+      lon,
       countryName: country?.[1] ?? null
     });
   }
@@ -212,12 +249,24 @@ for (const row of LOCALITIES) {
 const regionAliases = new Map();
 
 for (const row of REGIONS) {
-  const [name, code, countryName, representativeCity,
-    lat, lon, aliases] = row;
+  const [
+    name,
+    code,
+    countryName,
+    representativeCity,
+    lat,
+    lon,
+    aliases
+  ] = row;
 
   for (const alias of [name, ...aliases]) {
     regionAliases.set(normalize(alias), {
-      name, code, countryName, representativeCity, lat, lon
+      name,
+      code,
+      countryName,
+      representativeCity,
+      lat,
+      lon
     });
   }
 }
@@ -226,7 +275,7 @@ for (const row of REGIONS) {
  * Classify a public profile location.
  *
  * Return values:
- *   matched   — safe dictionary-based match
+ *   matched   — dictionary-based match
  *   ambiguous — requires review or a later geocoder
  *   rejected  — explicitly non-geographic text
  *
@@ -237,11 +286,17 @@ export function classifyLocation(rawLocation) {
   const key = normalize(rawLocation);
 
   if (!key) {
-    return unresolved("rejected", "empty_location");
+    return unresolved(
+      "rejected",
+      "empty_location"
+    );
   }
 
   if (NON_GEOGRAPHIC.has(key)) {
-    return unresolved("rejected", "non_geographic_dictionary");
+    return unresolved(
+      "rejected",
+      "non_geographic_dictionary_v2"
+    );
   }
 
   const countryCode = countryAliases.get(key);
@@ -275,7 +330,7 @@ export function classifyLocation(rawLocation) {
       lat: region.lat,
       lon: region.lon,
       confidence: 1,
-      source: "region_dictionary_v1"
+      source: "region_dictionary_v2"
     });
   }
 
@@ -296,9 +351,12 @@ export function classifyLocation(rawLocation) {
     });
   }
 
-  return unresolved("ambiguous", "dictionary_no_match");
+  return unresolved(
+    "ambiguous",
+    "dictionary_no_match"
+  );
 }
 
 export function getClassifierVersion() {
-  return "0.1.0";
+  return VERSION;
 }
