@@ -1,10 +1,13 @@
 
-import { classifyLocation, getClassifierVersion } from "./location-classifier.js";
+import {
+  classifyLocation,
+  getClassifierVersion
+} from "./location-classifier.js";
 
 const HIVE_RPC = "https://api.hive.blog";
 const CENSUS_ID = "hive_census";
 const PROTOCOL_VERSION = 1;
-const VERSION = "0.9.0";
+const VERSION = "0.9.1";
 
 const DEFAULT_MANUAL_SCAN_BLOCKS = 500;
 const MAX_MANUAL_SCAN_BLOCKS = 1000;
@@ -19,6 +22,10 @@ const PROFILE_LOOKUP_BATCH_SIZE = 100;
 const PROFILE_FETCH_BATCH_SIZE = 100;
 
 const LOCATION_CLASSIFY_PER_RUN = 100;
+
+// ============================================================
+// WORKER
+// ============================================================
 
 export default {
   async fetch(request, env) {
@@ -39,8 +46,17 @@ export default {
       try {
         const result = await env.DB.prepare(`
           SELECT
-            account, country, country_name, region, region_name,
-            city, lat, lon, block_num, trx_id, updated_at
+            account,
+            country,
+            country_name,
+            region,
+            region_name,
+            city,
+            lat,
+            lon,
+            block_num,
+            trx_id,
+            updated_at
           FROM census_current
           ORDER BY country, region, city, account
         `).all();
@@ -58,30 +74,54 @@ export default {
     if (url.pathname === "/api/indexer/status") {
       try {
         const props = await getDynamicGlobalProperties();
+
         const cursor = await getMetaNumber(
-          env, "last_scanned_block", 110275441
+          env,
+          "last_scanned_block",
+          110275441
         );
 
         const lastScheduledRun = await getMeta(
-          env, "last_scheduled_run"
+          env,
+          "last_scheduled_run"
         );
+
         const lastSuccessfulScan = await getMeta(
-          env, "last_successful_scan"
+          env,
+          "last_successful_scan"
         );
-        const lastError = await getMeta(env, "last_error");
-        const lastErrorAt = await getMeta(env, "last_error_at");
+
+        const lastError = await getMeta(
+          env,
+          "last_error"
+        );
+
+        const lastErrorAt = await getMeta(
+          env,
+          "last_error_at"
+        );
 
         const irreversible = Number(
           props.last_irreversible_block_num
         );
-        const head = Number(props.head_block_number);
-        const blocksBehind = Math.max(0, irreversible - cursor);
+
+        const head = Number(
+          props.head_block_number
+        );
+
+        const blocksBehind = Math.max(
+          0,
+          irreversible - cursor
+        );
 
         return jsonResponse({
           ok: true,
           version: VERSION,
           indexer_state: determineIndexerState(
-            blocksBehind, lastScheduledRun, lastError, lastErrorAt
+            blocksBehind,
+            lastScheduledRun,
+            lastError,
+            lastErrorAt
           ),
           last_scanned_block: cursor,
           head_block_number: head,
@@ -112,11 +152,17 @@ export default {
             )
           : DEFAULT_MANUAL_SCAN_BLOCKS;
 
-        const result = await scanHive(env, blocks);
+        const result = await scanHive(
+          env,
+          blocks
+        );
 
         await setMeta(
-          env, "last_successful_scan", new Date().toISOString()
+          env,
+          "last_successful_scan",
+          new Date().toISOString()
         );
+
         await clearIndexerError(env);
 
         return jsonResponse({
@@ -132,7 +178,9 @@ export default {
 
     if (url.pathname === "/api/profiles/status") {
       try {
-        return jsonResponse(await getProfileImportStatus(env));
+        return jsonResponse(
+          await getProfileImportStatus(env)
+        );
       } catch (error) {
         return errorResponse(error);
       }
@@ -158,7 +206,8 @@ export default {
             m.lon,
             p.fetched_at
           FROM profile_locations p
-          LEFT JOIN location_matches m ON m.id = p.match_id
+          LEFT JOIN location_matches m
+            ON m.id = p.match_id
           ORDER BY p.account
           LIMIT 100
         `).all();
@@ -167,7 +216,6 @@ export default {
           ok: true,
           version: VERSION,
           count: result.results.length,
-          note: "First 100 stored profile locations.",
           accounts: result.results
         });
       } catch (error) {
@@ -189,13 +237,20 @@ export default {
             m.location_type,
             COUNT(*) AS accounts
           FROM profile_locations p
-          JOIN location_matches m ON m.id = p.match_id
+          JOIN location_matches m
+            ON m.id = p.match_id
           WHERE m.status = 'matched'
             AND m.lat IS NOT NULL
             AND m.lon IS NOT NULL
           GROUP BY
-            m.country, m.country_name, m.region, m.region_name,
-            m.city, m.lat, m.lon, m.location_type
+            m.country,
+            m.country_name,
+            m.region,
+            m.region_name,
+            m.city,
+            m.lat,
+            m.lon,
+            m.location_type
           ORDER BY accounts DESC
         `).all();
 
@@ -210,26 +265,34 @@ export default {
       }
     }
 
-    if (url.pathname === "/api/profiles/classifier/status") {
+    if (
+      url.pathname ===
+      "/api/profiles/classifier/status"
+    ) {
       try {
-        return jsonResponse(await getClassifierStatus(env));
+        return jsonResponse(
+          await getClassifierStatus(env)
+        );
       } catch (error) {
         return errorResponse(error);
       }
     }
 
     if (url.pathname.startsWith("/api/")) {
-      return jsonResponse(
-        { ok: false, error: "Unknown API endpoint" },
-        404
-      );
+      return jsonResponse({
+        ok: false,
+        error: "Unknown API endpoint"
+      }, 404);
     }
 
     if (env.ASSETS) {
       return env.ASSETS.fetch(request);
     }
 
-    return new Response("Hive Census", { status: 200 });
+    return new Response(
+      "Hive Census",
+      { status: 200 }
+    );
   },
 
   async scheduled(controller, env, ctx) {
@@ -242,22 +305,35 @@ export default {
 // ============================================================
 
 async function runScheduledJobs(env) {
+  // Priority 1: Official Hive Census indexer.
   try {
     await runScheduledIndexer(env);
   } catch (error) {
-    console.error("Census scheduled indexer failed:", error);
+    console.error(
+      "Census scheduled indexer failed:",
+      error
+    );
   }
 
-  try {
-    await runScheduledProfileImporter(env);
-  } catch (error) {
-    console.error("Profile importer failed:", error);
-  }
-
+  // Priority 2: Location classification.
+  // Runs before the potentially long profile importer.
   try {
     await runScheduledLocationClassifier(env);
   } catch (error) {
-    console.error("Location classifier failed:", error);
+    console.error(
+      "Location classifier failed:",
+      error
+    );
+  }
+
+  // Priority 3: Hive profile importer.
+  try {
+    await runScheduledProfileImporter(env);
+  } catch (error) {
+    console.error(
+      "Profile importer failed:",
+      error
+    );
   }
 }
 
@@ -267,25 +343,39 @@ async function runScheduledJobs(env) {
 
 async function runScheduledIndexer(env) {
   await setMeta(
-    env, "last_scheduled_run", new Date().toISOString()
+    env,
+    "last_scheduled_run",
+    new Date().toISOString()
   );
 
   try {
     const props = await getDynamicGlobalProperties();
+
     const cursor = await getMetaNumber(
-      env, "last_scanned_block", 110275441
+      env,
+      "last_scanned_block",
+      110275441
     );
+
     const irreversible = Number(
       props.last_irreversible_block_num
     );
-    const lag = Math.max(0, irreversible - cursor);
+
+    const lag = Math.max(
+      0,
+      irreversible - cursor
+    );
+
     const scanSize = chooseScheduledScanSize(lag);
 
     await scanHive(env, scanSize);
 
     await setMeta(
-      env, "last_successful_scan", new Date().toISOString()
+      env,
+      "last_successful_scan",
+      new Date().toISOString()
     );
+
     await clearIndexerError(env);
   } catch (error) {
     await recordIndexerError(env, error);
@@ -294,21 +384,36 @@ async function runScheduledIndexer(env) {
 }
 
 function chooseScheduledScanSize(lag) {
-  if (lag > 2000) return AGGRESSIVE_SCAN_BLOCKS;
-  if (lag > 250) return CATCHUP_SCAN_BLOCKS;
+  if (lag > 2000) {
+    return AGGRESSIVE_SCAN_BLOCKS;
+  }
+
+  if (lag > 250) {
+    return CATCHUP_SCAN_BLOCKS;
+  }
+
   return NORMAL_SCAN_BLOCKS;
 }
 
 function determineIndexerState(
-  blocksBehind, lastScheduledRun, lastError, lastErrorAt
+  blocksBehind,
+  lastScheduledRun,
+  lastError,
+  lastErrorAt
 ) {
-  if (!Number.isFinite(blocksBehind)) return "unknown";
+  if (!Number.isFinite(blocksBehind)) {
+    return "unknown";
+  }
 
   if (lastScheduledRun) {
-    const scheduledTime = Date.parse(lastScheduledRun);
+    const scheduledTime = Date.parse(
+      lastScheduledRun
+    );
+
     if (
       Number.isFinite(scheduledTime) &&
-      Date.now() - scheduledTime > 15 * 60 * 1000
+      Date.now() - scheduledTime >
+        15 * 60 * 1000
     ) {
       return "stalled";
     }
@@ -316,28 +421,39 @@ function determineIndexerState(
 
   if (lastError && lastErrorAt) {
     const errorTime = Date.parse(lastErrorAt);
+
     if (
       Number.isFinite(errorTime) &&
-      Date.now() - errorTime < 15 * 60 * 1000
+      Date.now() - errorTime <
+        15 * 60 * 1000
     ) {
       return "error";
     }
   }
 
-  if (blocksBehind <= 50) return "synced";
+  if (blocksBehind <= 50) {
+    return "synced";
+  }
+
   return "catching_up";
 }
 
 async function scanHive(env, requestedBlocks) {
   const props = await getDynamicGlobalProperties();
+
   const irreversible = Number(
     props.last_irreversible_block_num
   );
+
   const initialCursor = await getMetaNumber(
-    env, "last_scanned_block", 110275441
+    env,
+    "last_scanned_block",
+    110275441
   );
+
   const endBlock = Math.min(
-    irreversible, initialCursor + requestedBlocks
+    irreversible,
+    initialCursor + requestedBlocks
   );
 
   let cursor = initialCursor;
@@ -349,37 +465,64 @@ async function scanHive(env, requestedBlocks) {
 
   while (cursor < endBlock) {
     const start = cursor + 1;
-    const count = Math.min(
-      BLOCK_BATCH_SIZE, endBlock - cursor
-    );
-    const blocks = await getBlockRange(start, count);
 
-    if (!Array.isArray(blocks) || blocks.length !== count) {
+    const count = Math.min(
+      BLOCK_BATCH_SIZE,
+      endBlock - cursor
+    );
+
+    const blocks = await getBlockRange(
+      start,
+      count
+    );
+
+    if (
+      !Array.isArray(blocks) ||
+      blocks.length !== count
+    ) {
       throw new Error(
         `Incomplete block range at ${start}: expected ${count}, got ${blocks?.length ?? 0}`
       );
     }
 
-    for (let index = 0; index < blocks.length; index++) {
+    for (
+      let index = 0;
+      index < blocks.length;
+      index++
+    ) {
       const block = blocks[index];
       const blockNumber = start + index;
 
-      if (!block || !Array.isArray(block.transactions)) {
-        throw new Error(`Invalid block data at ${blockNumber}`);
+      if (
+        !block ||
+        !Array.isArray(block.transactions)
+      ) {
+        throw new Error(
+          `Invalid block data at ${blockNumber}`
+        );
       }
 
       for (
         let transactionIndex = 0;
-        transactionIndex < block.transactions.length;
+        transactionIndex <
+          block.transactions.length;
         transactionIndex++
       ) {
-        const transaction = block.transactions[transactionIndex];
+        const transaction =
+          block.transactions[transactionIndex];
+
         const trxId = getTransactionId(
-          block, transactionIndex
+          block,
+          transactionIndex
         );
 
-        for (const operation of transaction.operations || []) {
-          const parsed = parseOperation(operation);
+        for (
+          const operation of
+          transaction.operations || []
+        ) {
+          const parsed = parseOperation(
+            operation
+          );
 
           if (
             !parsed ||
@@ -391,7 +534,9 @@ async function scanHive(env, requestedBlocks) {
 
           censusOperations++;
 
-          const account = getPostingAccount(parsed.value);
+          const account = getPostingAccount(
+            parsed.value
+          );
 
           if (!account) {
             invalidOperations++;
@@ -402,8 +547,11 @@ async function scanHive(env, requestedBlocks) {
 
           try {
             payload =
-              typeof parsed.value.json === "string"
-                ? JSON.parse(parsed.value.json)
+              typeof parsed.value.json ===
+              "string"
+                ? JSON.parse(
+                    parsed.value.json
+                  )
                 : parsed.value.json;
           } catch {
             invalidOperations++;
@@ -412,11 +560,23 @@ async function scanHive(env, requestedBlocks) {
 
           if (isValidSetPayload(payload)) {
             await applySet(
-              env, account, payload, blockNumber, trxId
+              env,
+              account,
+              payload,
+              blockNumber,
+              trxId
             );
+
             setsApplied++;
-          } else if (isValidUnsetPayload(payload)) {
-            await applyUnset(env, account, blockNumber);
+          } else if (
+            isValidUnsetPayload(payload)
+          ) {
+            await applyUnset(
+              env,
+              account,
+              blockNumber
+            );
+
             unsetsApplied++;
           } else {
             invalidOperations++;
@@ -429,11 +589,15 @@ async function scanHive(env, requestedBlocks) {
     blocksScanned += count;
 
     await setMeta(
-      env, "last_scanned_block", String(cursor)
+      env,
+      "last_scanned_block",
+      String(cursor)
     );
   }
 
-  const latestProps = await getDynamicGlobalProperties();
+  const latestProps =
+    await getDynamicGlobalProperties();
+
   const latestIrreversible = Number(
     latestProps.last_irreversible_block_num
   );
@@ -446,17 +610,24 @@ async function scanHive(env, requestedBlocks) {
     sets_applied: setsApplied,
     unsets_applied: unsetsApplied,
     invalid_operations: invalidOperations,
-    last_irreversible_block_num: latestIrreversible,
+    last_irreversible_block_num:
+      latestIrreversible,
     blocks_behind: Math.max(
-      0, latestIrreversible - cursor
+      0,
+      latestIrreversible - cursor
     )
   };
 }
 
 function parseOperation(operation) {
-  if (Array.isArray(operation) && operation.length >= 2) {
+  if (
+    Array.isArray(operation) &&
+    operation.length >= 2
+  ) {
     return {
-      type: normalizeOperationType(operation[0]),
+      type: normalizeOperationType(
+        operation[0]
+      ),
       value: operation[1]
     };
   }
@@ -467,7 +638,9 @@ function parseOperation(operation) {
     typeof operation.type === "string"
   ) {
     return {
-      type: normalizeOperationType(operation.type),
+      type: normalizeOperationType(
+        operation.type
+      ),
       value: operation.value
     };
   }
@@ -476,14 +649,18 @@ function parseOperation(operation) {
 }
 
 function normalizeOperationType(type) {
-  if (typeof type !== "string") return "";
+  if (typeof type !== "string") {
+    return "";
+  }
+
   return type.endsWith("_operation")
     ? type.slice(0, -10)
     : type;
 }
 
 function getPostingAccount(value) {
-  const postingAuths = value?.required_posting_auths;
+  const postingAuths =
+    value?.required_posting_auths;
 
   if (
     !Array.isArray(postingAuths) ||
@@ -493,13 +670,20 @@ function getPostingAccount(value) {
   }
 
   const account = postingAuths[0];
-  return typeof account === "string" && account.length > 0
+
+  return (
+    typeof account === "string" &&
+    account.length > 0
+  )
     ? account
     : null;
 }
 
 function isValidSetPayload(payload) {
-  if (!payload || typeof payload !== "object") {
+  if (
+    !payload ||
+    typeof payload !== "object"
+  ) {
     return false;
   }
 
@@ -518,7 +702,8 @@ function isValidSetPayload(payload) {
   }
 
   if (
-    typeof payload.country_name !== "string" ||
+    typeof payload.country_name !==
+      "string" ||
     !payload.country_name.trim()
   ) {
     return false;
@@ -531,7 +716,12 @@ function isValidSetPayload(payload) {
     return false;
   }
 
-  for (const field of ["region", "region_name"]) {
+  for (
+    const field of [
+      "region",
+      "region_name"
+    ]
+  ) {
     if (
       payload[field] !== undefined &&
       payload[field] !== null &&
@@ -568,14 +758,30 @@ function isValidUnsetPayload(payload) {
 }
 
 async function applySet(
-  env, account, payload, blockNumber, trxId
+  env,
+  account,
+  payload,
+  blockNumber,
+  trxId
 ) {
   await env.DB.prepare(`
     INSERT INTO census_current (
-      account, country, country_name, region, region_name,
-      city, lat, lon, block_num, trx_id, updated_at
+      account,
+      country,
+      country_name,
+      region,
+      region_name,
+      city,
+      lat,
+      lon,
+      block_num,
+      trx_id,
+      updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    VALUES (
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+      CURRENT_TIMESTAMP
+    )
     ON CONFLICT(account) DO UPDATE SET
       country = excluded.country,
       country_name = excluded.country_name,
@@ -587,7 +793,8 @@ async function applySet(
       block_num = excluded.block_num,
       trx_id = excluded.trx_id,
       updated_at = CURRENT_TIMESTAMP
-    WHERE excluded.block_num >= census_current.block_num
+    WHERE excluded.block_num >=
+      census_current.block_num
   `).bind(
     account,
     payload.country,
@@ -602,16 +809,27 @@ async function applySet(
   ).run();
 }
 
-async function applyUnset(env, account, blockNumber) {
+async function applyUnset(
+  env,
+  account,
+  blockNumber
+) {
   await env.DB.prepare(`
     DELETE FROM census_current
     WHERE account = ?
       AND block_num <= ?
-  `).bind(account, blockNumber).run();
+  `).bind(
+    account,
+    blockNumber
+  ).run();
 }
 
-function getTransactionId(block, index) {
+function getTransactionId(
+  block,
+  index
+) {
   const ids = block.transaction_ids;
+
   return Array.isArray(ids)
     ? ids[index] || null
     : null;
@@ -623,31 +841,47 @@ function getTransactionId(block, index) {
 
 async function runScheduledProfileImporter(env) {
   const complete = await getProfileMeta(
-    env, "import_complete", "false"
+    env,
+    "import_complete",
+    "false"
   );
 
-  if (complete === "true") return;
+  if (complete === "true") {
+    return;
+  }
 
   try {
     await importProfileBatch(
-      env, PROFILE_ACCOUNTS_PER_RUN
+      env,
+      PROFILE_ACCOUNTS_PER_RUN
     );
+
     await setProfileMeta(
-      env, "last_import_error", ""
+      env,
+      "last_import_error",
+      ""
     );
   } catch (error) {
     await setProfileMeta(
       env,
       "last_import_error",
-      String(error?.message || error)
+      String(
+        error?.message || error
+      )
     );
+
     throw error;
   }
 }
 
-async function importProfileBatch(env, maxAccounts) {
+async function importProfileBatch(
+  env,
+  maxAccounts
+) {
   let lastAccount = await getProfileMeta(
-    env, "last_account", ""
+    env,
+    "last_account",
+    ""
   );
 
   let scanned = 0;
@@ -655,17 +889,25 @@ async function importProfileBatch(env, maxAccounts) {
   let reachedEnd = false;
 
   while (scanned < maxAccounts) {
-    const remaining = maxAccounts - scanned;
+    const remaining =
+      maxAccounts - scanned;
+
     const lookupLimit = Math.min(
       PROFILE_LOOKUP_BATCH_SIZE,
-      remaining + (lastAccount ? 1 : 0)
+      remaining + (
+        lastAccount ? 1 : 0
+      )
     );
 
     const names = await lookupHiveAccounts(
-      lastAccount, lookupLimit
+      lastAccount,
+      lookupLimit
     );
 
-    if (!Array.isArray(names) || names.length === 0) {
+    if (
+      !Array.isArray(names) ||
+      names.length === 0
+    ) {
       reachedEnd = true;
       break;
     }
@@ -680,10 +922,16 @@ async function importProfileBatch(env, maxAccounts) {
     }
 
     const batchNames = newNames.slice(
-      0, Math.min(PROFILE_FETCH_BATCH_SIZE, remaining)
+      0,
+      Math.min(
+        PROFILE_FETCH_BATCH_SIZE,
+        remaining
+      )
     );
 
-    const accounts = await getHiveAccounts(batchNames);
+    const accounts = await getHiveAccounts(
+      batchNames
+    );
 
     if (!Array.isArray(accounts)) {
       throw new Error(
@@ -693,23 +941,38 @@ async function importProfileBatch(env, maxAccounts) {
 
     const accountsByName = new Map(
       accounts
-        .filter(account => account && account.name)
-        .map(account => [account.name, account])
+        .filter(
+          account =>
+            account &&
+            account.name
+        )
+        .map(
+          account => [
+            account.name,
+            account
+          ]
+        )
     );
 
     for (const name of batchNames) {
-      const account = accountsByName.get(name);
+      const account =
+        accountsByName.get(name);
 
       if (account) {
-        const location = extractProfileLocation(account);
+        const location =
+          extractProfileLocation(
+            account
+          );
 
         if (location) {
           await saveProfileLocation(
             env,
             name,
             location,
-            account.last_account_update || null
+            account.last_account_update ||
+              null
           );
+
           foundLocations++;
         }
       }
@@ -718,66 +981,94 @@ async function importProfileBatch(env, maxAccounts) {
       lastAccount = name;
 
       await setProfileMeta(
-        env, "last_account", lastAccount
+        env,
+        "last_account",
+        lastAccount
       );
     }
   }
 
-  // Actual values are derived from the stored rows.
-  // This avoids the counter drift observed in v0.8.0.
-  const actualLocations = await env.DB.prepare(`
-    SELECT COUNT(*) AS count FROM profile_locations
-  `).first();
+  const actualLocations =
+    await env.DB.prepare(`
+      SELECT COUNT(*) AS count
+      FROM profile_locations
+    `).first();
+
+  const alreadyScanned = Number(
+    await getProfileMeta(
+      env,
+      "accounts_scanned",
+      "0"
+    )
+  ) || 0;
 
   await setProfileMeta(
-    env, "accounts_scanned",
+    env,
+    "accounts_scanned",
     String(
-      (Number(
-        await getProfileMeta(env, "accounts_scanned", "0")
-      ) || 0) + scanned
+      alreadyScanned + scanned
     )
   );
 
   await setProfileMeta(
-    env, "accounts_with_location",
-    String(Number(actualLocations?.count || 0))
+    env,
+    "accounts_with_location",
+    String(
+      Number(
+        actualLocations?.count || 0
+      )
+    )
   );
 
   await setProfileMeta(
-    env, "last_import_run", new Date().toISOString()
+    env,
+    "last_import_run",
+    new Date().toISOString()
   );
 
   if (reachedEnd) {
     await setProfileMeta(
-      env, "import_complete", "true"
+      env,
+      "import_complete",
+      "true"
     );
   }
 
   return {
-    accounts_scanned_this_run: scanned,
-    locations_found_this_run: foundLocations,
+    accounts_scanned_this_run:
+      scanned,
+    locations_found_this_run:
+      foundLocations,
     last_account: lastAccount,
     import_complete: reachedEnd
   };
 }
 
-async function lookupHiveAccounts(lowerBound, limit) {
+async function lookupHiveAccounts(
+  lowerBound,
+  limit
+) {
   const result = await hiveRpc(
     "condenser_api.lookup_accounts",
     [lowerBound, limit]
   );
 
   if (!Array.isArray(result)) {
-    throw new Error("Invalid lookup_accounts response");
+    throw new Error(
+      "Invalid lookup_accounts response"
+    );
   }
 
   return result.filter(
-    name => typeof name === "string"
+    name =>
+      typeof name === "string"
   );
 }
 
 async function getHiveAccounts(names) {
-  if (!names.length) return [];
+  if (!names.length) {
+    return [];
+  }
 
   return hiveRpc(
     "condenser_api.get_accounts",
@@ -785,22 +1076,38 @@ async function getHiveAccounts(names) {
   );
 }
 
-function extractProfileLocation(account) {
-  const posting = parseAccountMetadata(
-    account.posting_json_metadata
-  );
-  const regular = parseAccountMetadata(
-    account.json_metadata
-  );
+function extractProfileLocation(
+  account
+) {
+  const posting =
+    parseAccountMetadata(
+      account.posting_json_metadata
+    );
 
-  for (const value of [
+  const regular =
+    parseAccountMetadata(
+      account.json_metadata
+    );
+
+  const candidates = [
     posting?.profile?.location,
     regular?.profile?.location
-  ]) {
-    if (typeof value !== "string") continue;
+  ];
+
+  for (const value of candidates) {
+    if (
+      typeof value !== "string"
+    ) {
+      continue;
+    }
+
     const location = value.trim();
+
     if (location.length > 0) {
-      return location.slice(0, 500);
+      return location.slice(
+        0,
+        500
+      );
     }
   }
 
@@ -808,13 +1115,30 @@ function extractProfileLocation(account) {
 }
 
 function parseAccountMetadata(value) {
-  if (!value) return null;
-  if (typeof value === "object") return value;
-  if (typeof value !== "string") return null;
+  if (!value) {
+    return null;
+  }
+
+  if (
+    typeof value === "object"
+  ) {
+    return value;
+  }
+
+  if (
+    typeof value !== "string"
+  ) {
+    return null;
+  }
 
   try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object"
+    const parsed =
+      JSON.parse(value);
+
+    return (
+      parsed &&
+      typeof parsed === "object"
+    )
       ? parsed
       : null;
   } catch {
@@ -831,45 +1155,90 @@ function normalizeLocation(value) {
 
 function makeLocationKey(value) {
   return normalizeLocation(value)
-    .toLocaleLowerCase("en-US");
+    .toLocaleLowerCase(
+      "en-US"
+    );
 }
 
 async function saveProfileLocation(
-  env, account, rawLocation, lastAccountUpdate
+  env,
+  account,
+  rawLocation,
+  lastAccountUpdate
 ) {
-  const normalized = normalizeLocation(rawLocation);
-  const key = makeLocationKey(normalized);
+  const normalized =
+    normalizeLocation(
+      rawLocation
+    );
 
-  if (!key) return;
+  const key =
+    makeLocationKey(
+      normalized
+    );
+
+  if (!key) {
+    return;
+  }
 
   await env.DB.prepare(`
     INSERT OR IGNORE INTO location_matches (
-      location_key, original_example, status, source
+      location_key,
+      original_example,
+      status,
+      source
     )
-    VALUES (?, ?, 'pending', 'hive_profile')
-  `).bind(key, rawLocation).run();
+    VALUES (
+      ?, ?, 'pending',
+      'hive_profile'
+    )
+  `).bind(
+    key,
+    rawLocation
+  ).run();
 
   await env.DB.prepare(`
     INSERT INTO profile_locations (
-      account, raw_location, normalized_location,
-      location_key, match_id, match_status,
-      last_account_update, fetched_at
+      account,
+      raw_location,
+      normalized_location,
+      location_key,
+      match_id,
+      match_status,
+      last_account_update,
+      fetched_at
     )
     VALUES (
       ?, ?, ?, ?,
-      (SELECT id FROM location_matches WHERE location_key = ?),
-      'pending', ?, CURRENT_TIMESTAMP
+      (
+        SELECT id
+        FROM location_matches
+        WHERE location_key = ?
+      ),
+      'pending',
+      ?,
+      CURRENT_TIMESTAMP
     )
     ON CONFLICT(account) DO UPDATE SET
-      raw_location = excluded.raw_location,
-      normalized_location = excluded.normalized_location,
-      location_key = excluded.location_key,
-      match_id = excluded.match_id,
-      match_status = excluded.match_status,
-      last_account_update = excluded.last_account_update,
-      fetched_at = CURRENT_TIMESTAMP
+      raw_location =
+        excluded.raw_location,
+      normalized_location =
+        excluded.normalized_location,
+      location_key =
+        excluded.location_key,
+      match_id =
+        excluded.match_id,
+      match_status =
+        excluded.match_status,
+      last_account_update =
+        excluded.last_account_update,
+      fetched_at =
+        CURRENT_TIMESTAMP
   `).bind(
-    account, rawLocation, normalized, key, key,
+    account,
+    rawLocation,
+    normalized,
+    key,
+    key,
     lastAccountUpdate
   ).run();
 }
@@ -879,10 +1248,22 @@ async function saveProfileLocation(
 // ============================================================
 
 async function runScheduledLocationClassifier(env) {
+  const startedAt =
+    new Date().toISOString();
+
+  // Diagnostic marker written before processing.
+  await setProfileMeta(
+    env,
+    "last_classifier_started",
+    startedAt
+  );
+
   try {
-    const result = await classifyPendingLocations(
-      env, LOCATION_CLASSIFY_PER_RUN
-    );
+    const result =
+      await classifyPendingLocations(
+        env,
+        LOCATION_CLASSIFY_PER_RUN
+      );
 
     await setProfileMeta(
       env,
@@ -891,7 +1272,33 @@ async function runScheduledLocationClassifier(env) {
     );
 
     await setProfileMeta(
-      env, "last_classifier_error", ""
+      env,
+      "last_classifier_processed",
+      String(result.processed)
+    );
+
+    await setProfileMeta(
+      env,
+      "last_classifier_matched",
+      String(result.matched)
+    );
+
+    await setProfileMeta(
+      env,
+      "last_classifier_ambiguous",
+      String(result.ambiguous)
+    );
+
+    await setProfileMeta(
+      env,
+      "last_classifier_rejected",
+      String(result.rejected)
+    );
+
+    await setProfileMeta(
+      env,
+      "last_classifier_error",
+      ""
     );
 
     return result;
@@ -899,33 +1306,53 @@ async function runScheduledLocationClassifier(env) {
     await setProfileMeta(
       env,
       "last_classifier_error",
-      String(error?.message || error)
+      String(
+        error?.message || error
+      )
     );
+
     throw error;
   }
 }
 
-async function classifyPendingLocations(env, limit) {
-  const pending = await env.DB.prepare(`
-    SELECT id, original_example
-    FROM location_matches
-    WHERE status = 'pending'
-    ORDER BY id
-    LIMIT ?
-  `).bind(limit).all();
+async function classifyPendingLocations(
+  env,
+  limit
+) {
+  const pending =
+    await env.DB.prepare(`
+      SELECT
+        id,
+        original_example
+      FROM location_matches
+      WHERE status = 'pending'
+      ORDER BY id
+      LIMIT ?
+    `).bind(
+      limit
+    ).all();
 
   let matched = 0;
   let ambiguous = 0;
   let rejected = 0;
 
-  for (const row of pending.results) {
-    const classification = classifyLocation(
-      row.original_example
-    );
+  for (
+    const row of pending.results
+  ) {
+    const classification =
+      classifyLocation(
+        row.original_example
+      );
 
-    if (!["matched", "ambiguous", "rejected"].includes(
-      classification.status
-    )) {
+    if (
+      ![
+        "matched",
+        "ambiguous",
+        "rejected"
+      ].includes(
+        classification.status
+      )
+    ) {
       throw new Error(
         `Invalid classification for location ID ${row.id}`
       );
@@ -935,7 +1362,11 @@ async function classifyPendingLocations(env, limit) {
       UPDATE location_matches
       SET
         status = ?,
-        location_type = COALESCE(?, location_type),
+        location_type =
+          COALESCE(
+            ?,
+            location_type
+          ),
         country = ?,
         country_name = ?,
         region = ?,
@@ -945,7 +1376,8 @@ async function classifyPendingLocations(env, limit) {
         lon = ?,
         confidence = ?,
         source = ?,
-        updated_at = CURRENT_TIMESTAMP
+        updated_at =
+          CURRENT_TIMESTAMP
       WHERE id = ?
         AND status = 'pending'
     `).bind(
@@ -963,37 +1395,60 @@ async function classifyPendingLocations(env, limit) {
       row.id
     ).run();
 
-    if (classification.status === "matched") matched++;
-    if (classification.status === "ambiguous") ambiguous++;
-    if (classification.status === "rejected") rejected++;
+    if (
+      classification.status ===
+      "matched"
+    ) {
+      matched++;
+    }
+
+    if (
+      classification.status ===
+      "ambiguous"
+    ) {
+      ambiguous++;
+    }
+
+    if (
+      classification.status ===
+      "rejected"
+    ) {
+      rejected++;
+    }
   }
 
-  // Keep the account-level status consistent with the match table.
-  // The join is based on match_id rather than the raw text.
+  // Synchronize account statuses.
+  // Preserve future administrator overrides.
   await env.DB.prepare(`
     UPDATE profile_locations
     SET match_status = (
       SELECT m.status
       FROM location_matches m
-      WHERE m.id = profile_locations.match_id
+      WHERE m.id =
+        profile_locations.match_id
     )
     WHERE match_id IN (
       SELECT id
       FROM location_matches
       WHERE status != 'pending'
     )
-      AND match_status != (
-        SELECT m.status
-        FROM location_matches m
-        WHERE m.id = profile_locations.match_id
-      )
-      AND account NOT IN (
-        SELECT account FROM profile_location_overrides
-      )
+    AND match_status != (
+      SELECT m.status
+      FROM location_matches m
+      WHERE m.id =
+        profile_locations.match_id
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM profile_location_overrides o
+      WHERE o.account =
+        profile_locations.account
+    )
   `).run();
 
   return {
-    processed: pending.results.length,
+    processed:
+      pending.results.length,
     matched,
     ambiguous,
     rejected
@@ -1005,81 +1460,149 @@ async function classifyPendingLocations(env, limit) {
 // ============================================================
 
 async function getProfileImportStatus(env) {
-  const metaResult = await env.DB.prepare(`
-    SELECT key, value FROM profile_import_meta
-  `).all();
+  const metaResult =
+    await env.DB.prepare(`
+      SELECT key, value
+      FROM profile_import_meta
+    `).all();
 
-  const meta = Object.fromEntries(
-    metaResult.results.map(row => [row.key, row.value])
-  );
+  const meta =
+    Object.fromEntries(
+      metaResult.results.map(
+        row => [
+          row.key,
+          row.value
+        ]
+      )
+    );
 
-  const counts = await env.DB.prepare(`
-    SELECT
-      (SELECT COUNT(*) FROM profile_locations)
-        AS stored_profile_locations,
-      (SELECT COUNT(*) FROM location_matches)
-        AS unique_location_strings,
-      (SELECT COUNT(*) FROM location_matches
-       WHERE status = 'pending')
-        AS pending_location_matches
-  `).first();
+  const counts =
+    await env.DB.prepare(`
+      SELECT
+        (
+          SELECT COUNT(*)
+          FROM profile_locations
+        ) AS stored_profile_locations,
+        (
+          SELECT COUNT(*)
+          FROM location_matches
+        ) AS unique_location_strings,
+        (
+          SELECT COUNT(*)
+          FROM location_matches
+          WHERE status = 'pending'
+        ) AS pending_location_matches
+    `).first();
 
   return {
     ok: true,
     version: VERSION,
-    import_complete: meta.import_complete === "true",
-    last_account: meta.last_account || "",
-    accounts_scanned: Number(meta.accounts_scanned || 0),
-    accounts_with_location: Number(
-      counts?.stored_profile_locations || 0
-    ),
-    stored_profile_locations: Number(
-      counts?.stored_profile_locations || 0
-    ),
-    unique_location_strings: Number(
-      counts?.unique_location_strings || 0
-    ),
-    pending_location_matches: Number(
-      counts?.pending_location_matches || 0
-    ),
-    last_import_run: meta.last_import_run || "",
-    last_import_error: meta.last_import_error || "",
-    accounts_per_scheduled_run: PROFILE_ACCOUNTS_PER_RUN
+    import_complete:
+      meta.import_complete === "true",
+    last_account:
+      meta.last_account || "",
+    accounts_scanned:
+      Number(
+        meta.accounts_scanned || 0
+      ),
+    accounts_with_location:
+      Number(
+        counts?.stored_profile_locations ||
+          0
+      ),
+    stored_profile_locations:
+      Number(
+        counts?.stored_profile_locations ||
+          0
+      ),
+    unique_location_strings:
+      Number(
+        counts?.unique_location_strings ||
+          0
+      ),
+    pending_location_matches:
+      Number(
+        counts?.pending_location_matches ||
+          0
+      ),
+    last_import_run:
+      meta.last_import_run || "",
+    last_import_error:
+      meta.last_import_error || "",
+    accounts_per_scheduled_run:
+      PROFILE_ACCOUNTS_PER_RUN
   };
 }
 
 async function getClassifierStatus(env) {
-  const counts = await env.DB.prepare(`
-    SELECT
-      status,
-      location_type,
-      COUNT(*) AS count
-    FROM location_matches
-    GROUP BY status, location_type
-    ORDER BY status, location_type
-  `).all();
+  const counts =
+    await env.DB.prepare(`
+      SELECT
+        status,
+        location_type,
+        COUNT(*) AS count
+      FROM location_matches
+      GROUP BY
+        status,
+        location_type
+      ORDER BY
+        status,
+        location_type
+    `).all();
 
-  const meta = await env.DB.prepare(`
-    SELECT key, value
-    FROM profile_import_meta
-    WHERE key IN (
-      'last_classifier_run',
-      'last_classifier_error'
-    )
-  `).all();
+  const metaResult =
+    await env.DB.prepare(`
+      SELECT key, value
+      FROM profile_import_meta
+      WHERE key LIKE
+        'last_classifier_%'
+    `).all();
 
-  const values = Object.fromEntries(
-    meta.results.map(row => [row.key, row.value])
-  );
+  const meta =
+    Object.fromEntries(
+      metaResult.results.map(
+        row => [
+          row.key,
+          row.value
+        ]
+      )
+    );
 
   return {
     ok: true,
     version: VERSION,
-    classifier_version: getClassifierVersion(),
-    last_classifier_run: values.last_classifier_run || "",
-    last_classifier_error: values.last_classifier_error || "",
-    locations_per_scheduled_run: LOCATION_CLASSIFY_PER_RUN,
-    counts: counts.results
+    classifier_version:
+      getClassifierVersion(),
+    last_classifier_started:
+      meta.last_classifier_started || "",
+    last_classifier_run:
+      meta.last_classifier_run || "",
+    last_classifier_error:
+      meta.last_classifier_error || "",
+    last_classifier_processed:
+      Number(
+        meta.last_classifier_processed ||
+          0
+      ),
+    last_classifier_matched:
+      Number(
+        meta.last_classifier_matched ||
+          0
+      ),
+    last_classifier_ambiguous:
+      Number(
+        meta.last_classifier_ambiguous ||
+          0
+      ),
+    last_classifier_rejected:
+      Number(
+        meta.last_classifier_rejected ||
+          0
+      ),
+    locations_per_scheduled_run:
+      LOCATION_CLASSIFY_PER_RUN,
+    counts:
+      counts.results
   };
 }
 
@@ -1087,20 +1610,30 @@ async function getClassifierStatus(env) {
 // HIVE RPC
 // ============================================================
 
-async function hiveRpc(method, params) {
-  const response = await fetch(HIVE_RPC, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      method,
-      params,
-      id: 1
-    }),
-    signal: AbortSignal.timeout(20000)
-  });
+async function hiveRpc(
+  method,
+  params
+) {
+  const response = await fetch(
+    HIVE_RPC,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type":
+          "application/json"
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method,
+        params,
+        id: 1
+      }),
+      signal:
+        AbortSignal.timeout(
+          20000
+        )
+    }
+  );
 
   if (!response.ok) {
     throw new Error(
@@ -1108,15 +1641,21 @@ async function hiveRpc(method, params) {
     );
   }
 
-  const data = await response.json();
+  const data =
+    await response.json();
 
   if (data.error) {
     throw new Error(
-      `Hive RPC ${method}: ${JSON.stringify(data.error)}`
+      `Hive RPC ${method}: ${JSON.stringify(
+        data.error
+      )}`
     );
   }
 
-  if (data.result === undefined || data.result === null) {
+  if (
+    data.result === undefined ||
+    data.result === null
+  ) {
     throw new Error(
       `Hive RPC returned no result: ${method}`
     );
@@ -1132,11 +1671,15 @@ async function getDynamicGlobalProperties() {
   );
 }
 
-async function getBlockRange(startBlock, count) {
+async function getBlockRange(
+  startBlock,
+  count
+) {
   const result = await hiveRpc(
     "block_api.get_block_range",
     {
-      starting_block_num: startBlock,
+      starting_block_num:
+        startBlock,
       count
     }
   );
@@ -1148,95 +1691,182 @@ async function getBlockRange(startBlock, count) {
 // DATABASE METADATA
 // ============================================================
 
-async function getMeta(env, key) {
-  const row = await env.DB.prepare(`
-    SELECT value FROM census_meta WHERE key = ?
-  `).bind(key).first();
+async function getMeta(
+  env,
+  key
+) {
+  const row =
+    await env.DB.prepare(`
+      SELECT value
+      FROM census_meta
+      WHERE key = ?
+    `).bind(
+      key
+    ).first();
 
   return row?.value ?? "";
 }
 
-async function getMetaNumber(env, key, fallback) {
-  const value = await getMeta(env, key);
-  if (value === "") return fallback;
+async function getMetaNumber(
+  env,
+  key,
+  fallback
+) {
+  const value =
+    await getMeta(
+      env,
+      key
+    );
 
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
+  if (value === "") {
+    return fallback;
+  }
+
+  const number =
+    Number(value);
+
+  return Number.isFinite(number)
+    ? number
+    : fallback;
 }
 
-async function setMeta(env, key, value) {
+async function setMeta(
+  env,
+  key,
+  value
+) {
   await env.DB.prepare(`
-    INSERT INTO census_meta (key, value)
+    INSERT INTO census_meta (
+      key,
+      value
+    )
     VALUES (?, ?)
-    ON CONFLICT(key) DO UPDATE SET
+    ON CONFLICT(key)
+    DO UPDATE SET
       value = excluded.value
-  `).bind(key, String(value)).run();
+  `).bind(
+    key,
+    String(value)
+  ).run();
 }
 
-async function getProfileMeta(env, key, fallback = "") {
-  const row = await env.DB.prepare(`
-    SELECT value
-    FROM profile_import_meta
-    WHERE key = ?
-  `).bind(key).first();
+async function getProfileMeta(
+  env,
+  key,
+  fallback = ""
+) {
+  const row =
+    await env.DB.prepare(`
+      SELECT value
+      FROM profile_import_meta
+      WHERE key = ?
+    `).bind(
+      key
+    ).first();
 
   return row?.value ?? fallback;
 }
 
-async function setProfileMeta(env, key, value) {
+async function setProfileMeta(
+  env,
+  key,
+  value
+) {
   await env.DB.prepare(`
-    INSERT INTO profile_import_meta (key, value)
+    INSERT INTO profile_import_meta (
+      key,
+      value
+    )
     VALUES (?, ?)
-    ON CONFLICT(key) DO UPDATE SET
+    ON CONFLICT(key)
+    DO UPDATE SET
       value = excluded.value
-  `).bind(key, String(value)).run();
+  `).bind(
+    key,
+    String(value)
+  ).run();
 }
 
 async function countCensusAccounts(env) {
-  const row = await env.DB.prepare(`
-    SELECT COUNT(*) AS count FROM census_current
-  `).first();
+  const row =
+    await env.DB.prepare(`
+      SELECT COUNT(*) AS count
+      FROM census_current
+    `).first();
 
-  return Number(row?.count || 0);
+  return Number(
+    row?.count || 0
+  );
 }
 
-async function recordIndexerError(env, error) {
+async function recordIndexerError(
+  env,
+  error
+) {
   await setMeta(
-    env, "last_error",
-    String(error?.message || error)
+    env,
+    "last_error",
+    String(
+      error?.message || error
+    )
   );
+
   await setMeta(
-    env, "last_error_at",
+    env,
+    "last_error_at",
     new Date().toISOString()
   );
 }
 
 async function clearIndexerError(env) {
-  await setMeta(env, "last_error", "");
-  await setMeta(env, "last_error_at", "");
+  await setMeta(
+    env,
+    "last_error",
+    ""
+  );
+
+  await setMeta(
+    env,
+    "last_error_at",
+    ""
+  );
 }
 
 // ============================================================
 // HTTP RESPONSES
 // ============================================================
 
-function jsonResponse(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
-      "Access-Control-Allow-Origin": "*"
+function jsonResponse(
+  data,
+  status = 200
+) {
+  return new Response(
+    JSON.stringify(data),
+    {
+      status,
+      headers: {
+        "Content-Type":
+          "application/json; charset=utf-8",
+        "Cache-Control":
+          "no-store",
+        "Access-Control-Allow-Origin":
+          "*"
+      }
     }
-  });
+  );
 }
 
 function errorResponse(error) {
   console.error(error);
 
-  return jsonResponse({
-    ok: false,
-    version: VERSION,
-    error: String(error?.message || error)
-  }, 500);
+  return jsonResponse(
+    {
+      ok: false,
+      version: VERSION,
+      error: String(
+        error?.message || error
+      )
+    },
+    500
+  );
 }
