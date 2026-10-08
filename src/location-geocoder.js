@@ -1,15 +1,24 @@
 
 /**
- * Hive Profile Map — GeoNames Geocoder
- * Version 0.2.0
+ * Hive Census — Hive Profile Map
+ * GeoNames Geocoder v0.2.1
  *
- * External geographic search and conservative
- * candidate evaluation.
+ * Conservative geographic matching for public
+ * Hive profile.location values.
  *
- * Does not write to D1.
+ * Features:
+ * - Normalizes common separators and punctuation.
+ * - Recognizes "city, country" and "city country".
+ * - Handles country-only values as country proxies.
+ * - Rejects clearly non-geographic descriptions.
+ * - Avoids automatically resolving ambiguous places.
+ * - Does not write to D1.
+ *
+ * Country and region proxies are representative
+ * coordinates, not evidence of actual residence.
  */
 
-const VERSION = "0.2.0";
+const VERSION = "0.2.1";
 
 const GEONAMES_URL =
   "https://secure.geonames.org/searchJSON";
@@ -18,49 +27,100 @@ const MIN_CONFIDENCE = 0.85;
 const MAX_RESULTS = 10;
 const REQUEST_TIMEOUT_MS = 12000;
 
-const NON_GEOGRAPHIC_PATTERNS = [
-  /\bdigital nomad\b/i,
-  /\beverywhere\b/i,
-  /\banywhere\b/i,
-  /\bplanet earth\b/i,
-  /\bcrypto(?:tab)?\b/i,
-  /\bmetaverse\b/i,
-  /\bvirtual world\b/i
+const COUNTRY_DATA = [
+  ["PL", "Poland", ["polska"]],
+  ["BD", "Bangladesh", ["bd"]],
+  ["IN", "India", []],
+  ["US", "United States", [
+    "usa", "us", "united states of america"
+  ]],
+  ["CA", "Canada", []],
+  ["VE", "Venezuela", []],
+  ["ID", "Indonesia", []],
+  ["NG", "Nigeria", []],
+  ["PK", "Pakistan", []],
+  ["DE", "Germany", ["deutschland"]],
+  ["MY", "Malaysia", []],
+  ["AU", "Australia", []],
+  ["MU", "Mauritius", []],
+  ["ZA", "South Africa", []],
+  ["GB", "United Kingdom", [
+    "uk", "great britain", "britain"
+  ]],
+  ["SG", "Singapore", []],
+  ["FR", "France", []],
+  ["ES", "Spain", ["espana", "españa"]],
+  ["IT", "Italy", ["italia"]],
+  ["BR", "Brazil", ["brasil"]],
+  ["AR", "Argentina", []],
+  ["MX", "Mexico", ["méxico"]],
+  ["JP", "Japan", []],
+  ["KR", "South Korea", ["republic of korea"]],
+  ["PH", "Philippines", []],
+  ["TH", "Thailand", []],
+  ["VN", "Vietnam", []],
+  ["TR", "Türkiye", ["turkey", "turkiye"]],
+  ["UA", "Ukraine", []],
+  ["NL", "Netherlands", ["holland"]],
+  ["BE", "Belgium", []],
+  ["CH", "Switzerland", []],
+  ["AT", "Austria", []],
+  ["SE", "Sweden", []],
+  ["NO", "Norway", []],
+  ["DK", "Denmark", []],
+  ["FI", "Finland", []],
+  ["IE", "Ireland", []],
+  ["PT", "Portugal", []],
+  ["CZ", "Czechia", ["czech republic"]],
+  ["SK", "Slovakia", []],
+  ["HU", "Hungary", []],
+  ["RO", "Romania", []],
+  ["GR", "Greece", []],
+  ["EG", "Egypt", []],
+  ["KE", "Kenya", []],
+  ["GH", "Ghana", []],
+  ["CO", "Colombia", []],
+  ["PE", "Peru", []],
+  ["CL", "Chile", []],
+  ["NZ", "New Zealand", []],
+  ["SR", "Suriname", []]
 ];
 
-const COUNTRY_ALIASES = {
-  usa: "US",
-  "united states": "US",
-  "united states of america": "US",
-  uk: "GB",
-  "united kingdom": "GB",
-  england: "GB",
-  bangladesh: "BD",
-  india: "IN",
-  indonesia: "ID",
-  pakistan: "PK",
-  philippines: "PH",
-  germany: "DE",
-  deutschland: "DE",
-  poland: "PL",
-  polska: "PL",
-  ireland: "IE",
-  nigeria: "NG",
-  canada: "CA",
-  australia: "AU",
-  "south africa": "ZA",
-  china: "CN",
-  france: "FR",
-  japan: "JP",
-  brazil: "BR",
-  brasil: "BR",
-  venezuela: "VE",
-  malaysia: "MY",
-  singapore: "SG"
-};
+const NON_GEOGRAPHIC = new Set([
+  "earth",
+  "world",
+  "the world",
+  "whole world",
+  "planet",
+  "planet earth",
+  "cool planet",
+  "everywhere",
+  "anywhere",
+  "somewhere",
+  "nowhere",
+  "near you",
+  "online",
+  "internet",
+  "metaverse",
+  "universe",
+  "galaxy",
+  "the galaxy",
+  "steemit",
+  "international",
+  "digital nomad",
+  "virtual world",
+  "crypto",
+  "btc earn cryptotab browser"
+]);
 
-export function getGeocoderVersion() {
-  return VERSION;
+function normalizeText(value) {
+  return String(value ?? "")
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLocaleLowerCase("en-US")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .replace(/\s+/g, " ");
 }
 
 export function normalizeGeocoderQuery(value) {
@@ -74,65 +134,119 @@ export function normalizeGeocoderQuery(value) {
     .replace(/_/g, " ")
     .replace(/\s*,\s*/g, ", ")
     .replace(/\s+/g, " ")
+    .replace(/[.,;\s]+$/g, "")
     .slice(0, 500);
 }
 
-function normalizeText(value) {
-  return String(value || "")
-    .normalize("NFKD")
-    .replace(/\p{M}/gu, "")
-    .toLocaleLowerCase("en-US")
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim()
-    .replace(/\s+/g, " ");
+const countryAliases = new Map();
+
+for (const [code, name, aliases] of COUNTRY_DATA) {
+  for (const alias of [name, ...aliases]) {
+    countryAliases.set(
+      normalizeText(alias),
+      { code, name }
+    );
+  }
 }
 
 function isNonGeographicLocation(value) {
-  const normalized =
-    normalizeGeocoderQuery(value);
+  const normalized = normalizeText(value);
 
   return (
     !normalized ||
-    NON_GEOGRAPHIC_PATTERNS.some(
-      pattern => pattern.test(normalized)
-    )
+    NON_GEOGRAPHIC.has(normalized)
   );
 }
 
-function getCountryHint(query) {
-  const parts = query
-    .split(",")
-    .map(part => normalizeText(part))
-    .filter(Boolean);
+/**
+ * Resolve a country suffix only when it is
+ * explicitly recognized in our country dictionary.
+ *
+ * Examples:
+ * "Lagos, Nigeria" -> Lagos / NG
+ * "stockholm sweden" -> stockholm / SE
+ * "Durban city South Africa" -> Durban city / ZA
+ */
+function parseLocation(value) {
+  const query = normalizeGeocoderQuery(value);
+  const normalized = normalizeText(query);
 
-  if (parts.length < 2) {
-    return null;
+  const standaloneCountry =
+    countryAliases.get(normalized);
+
+  if (standaloneCountry) {
+    return {
+      query,
+      placeQuery: query,
+      countryHint: standaloneCountry.code,
+      countryOnly: true
+    };
   }
 
-  const last = parts[parts.length - 1];
-
-  return COUNTRY_ALIASES[last] || null;
-}
-
-function getPlaceQuery(query) {
-  const parts = query
+  const commaParts = query
     .split(",")
     .map(part => part.trim())
     .filter(Boolean);
 
-  if (parts.length < 2) {
-    return query;
+  if (commaParts.length >= 2) {
+    const lastPart = normalizeText(
+      commaParts[commaParts.length - 1]
+    );
+
+    const country = countryAliases.get(lastPart);
+
+    if (country) {
+      return {
+        query,
+        placeQuery: commaParts
+          .slice(0, -1)
+          .join(", "),
+        countryHint: country.code,
+        countryOnly: false
+      };
+    }
   }
 
-  const hint = getCountryHint(query);
+  const countryNames = [...countryAliases.entries()]
+    .sort((a, b) => b[0].length - a[0].length);
 
-  if (!hint) {
-    return query;
+  for (const [alias, country] of countryNames) {
+    if (
+      normalized.endsWith(` ${alias}`) &&
+      normalized.length > alias.length + 1
+    ) {
+      const words = normalized.split(" ");
+      const aliasWords = alias.split(" ");
+
+      const placeWords = words.slice(
+        0,
+        words.length - aliasWords.length
+      );
+
+      if (placeWords.length) {
+        return {
+          query,
+          placeQuery: placeWords.join(" "),
+          countryHint: country.code,
+          countryOnly: false
+        };
+      }
+    }
   }
 
-  return parts
-    .slice(0, -1)
-    .join(", ");
+  return {
+    query,
+    placeQuery: query,
+    countryHint: null,
+    countryOnly: false
+  };
+}
+
+function cleanPlaceName(value) {
+  return String(value || "")
+    .replace(/\bcity\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function getLocationType(item) {
@@ -140,10 +254,7 @@ function getLocationType(item) {
     return "country_proxy";
   }
 
-  if (
-    item.fcl === "A" &&
-    item.fcode !== "PCLI"
-  ) {
+  if (item.fcl === "A") {
     return "region_proxy";
   }
 
@@ -166,7 +277,7 @@ function ambiguous(reason, count = 0) {
     lat: null,
     lon: null,
     confidence: null,
-    source: "geonames_v1",
+    source: "geonames_v2",
     reason,
     candidates_considered: count
   };
@@ -196,24 +307,21 @@ function normalizeCandidate(item) {
           : null,
     lat: Number(item.lat),
     lon: Number(item.lng),
-    source: "geonames_v1"
+    source: "geonames_v2"
   };
 }
 
 function scoreCandidate(
-  query,
+  expectedName,
   item,
-  countryHint
+  countryHint,
+  countryOnly
 ) {
-  const name = normalizeText(
-    item.toponymName || item.name
-  );
+  const type = getLocationType(item);
 
-  const alternative = normalizeText(
-    item.name
-  );
-
-  const expected = normalizeText(query);
+  if (!type) {
+    return 0;
+  }
 
   if (
     countryHint &&
@@ -222,18 +330,27 @@ function scoreCandidate(
     return 0;
   }
 
-  if (
-    name === expected ||
-    alternative === expected
-  ) {
-    return 1;
+  if (countryOnly && type !== "country_proxy") {
+    return 0;
   }
 
-  if (
-    expected.includes(name) &&
-    name.length >= 4
-  ) {
-    return 0.65;
+  if (!countryOnly && type === "country_proxy") {
+    return 0;
+  }
+
+  const expected = normalizeText(
+    cleanPlaceName(expectedName)
+  );
+
+  const names = [
+    item.toponymName,
+    item.name
+  ]
+    .filter(Boolean)
+    .map(normalizeText);
+
+  if (names.includes(expected)) {
+    return 1;
   }
 
   return 0;
@@ -243,10 +360,9 @@ export function evaluateGeocoderResults(
   rawLocation,
   candidates
 ) {
-  const query =
-    normalizeGeocoderQuery(rawLocation);
+  const parsed = parseLocation(rawLocation);
 
-  if (isNonGeographicLocation(query)) {
+  if (isNonGeographicLocation(parsed.query)) {
     return rejected("non_geographic_location");
   }
 
@@ -257,11 +373,9 @@ export function evaluateGeocoderResults(
     return ambiguous("no_candidates");
   }
 
-  const countryHint =
-    getCountryHint(query);
-
-  const placeQuery =
-    getPlaceQuery(query);
+  const expectedName = parsed.countryOnly
+    ? parsed.query
+    : parsed.placeQuery;
 
   const evaluated = candidates
     .filter(item => {
@@ -288,9 +402,10 @@ export function evaluateGeocoderResults(
     .map(item => ({
       item,
       score: scoreCandidate(
-        placeQuery,
+        expectedName,
         item,
-        countryHint
+        parsed.countryHint,
+        parsed.countryOnly
       )
     }))
     .filter(result => result.score > 0)
@@ -337,10 +452,9 @@ export async function geocodeLocation(
   rawLocation,
   username
 ) {
-  const query =
-    normalizeGeocoderQuery(rawLocation);
+  const parsed = parseLocation(rawLocation);
 
-  if (isNonGeographicLocation(query)) {
+  if (isNonGeographicLocation(parsed.query)) {
     return rejected("non_geographic_location");
   }
 
@@ -353,17 +467,13 @@ export async function geocodeLocation(
     );
   }
 
-  const countryHint =
-    getCountryHint(query);
-
-  const placeQuery =
-    getPlaceQuery(query);
-
   const url = new URL(GEONAMES_URL);
 
   url.searchParams.set(
     "q",
-    placeQuery
+    parsed.countryOnly
+      ? parsed.query
+      : cleanPlaceName(parsed.placeQuery)
   );
 
   url.searchParams.set(
@@ -381,10 +491,17 @@ export async function geocodeLocation(
     "FULL"
   );
 
-  if (countryHint) {
+  if (parsed.countryHint) {
     url.searchParams.set(
       "country",
-      countryHint
+      parsed.countryHint
+    );
+  }
+
+  if (parsed.countryOnly) {
+    url.searchParams.set(
+      "featureCode",
+      "PCLI"
     );
   }
 
@@ -410,12 +527,18 @@ export async function geocodeLocation(
 
   if (data.status) {
     throw new Error(
-      `GeoNames API: ${data.status.message || "unknown error"}`
+      `GeoNames API: ${
+        data.status.message || "unknown error"
+      }`
     );
   }
 
   return evaluateGeocoderResults(
-    query,
+    parsed.query,
     data.geonames || []
   );
+}
+
+export function getGeocoderVersion() {
+  return VERSION;
 }
