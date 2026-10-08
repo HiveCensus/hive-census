@@ -9,7 +9,7 @@ import {
   getGeocoderVersion
 } from "./location-geocoder.js";
 
-const VERSION = "0.9.3";
+const VERSION = "0.9.4";
 const HIVE_RPC = "https://api.hive.blog";
 const CENSUS_ID = "hive_census";
 const PROTOCOL_VERSION = 1;
@@ -1444,11 +1444,26 @@ async function geocodeAmbiguousLocations(env, limit) {
         env.GEONAMES_USERNAME
       );
 
-      // Extra safety check: GeoNames module v0.2.0
-      // can overestimate confidence for short names.
       const safeResult = isSafeGeocoderMatch(
         row.original_example,
         result
+      );
+
+      // Diagnostic information is written to
+      // Worker logs, without changing the D1 schema.
+      console.log(
+        "[Geocoder] Result",
+        JSON.stringify({
+          location: row.original_example,
+          geocoder_status: result.status,
+          geocoder_reason: result.reason || null,
+          final_status: safeResult.status,
+          final_reason: safeResult.reason || null,
+          location_type:
+            safeResult.location_type || null,
+          country: safeResult.country || null,
+          city: safeResult.city || null
+        })
       );
 
       if (
@@ -1493,11 +1508,14 @@ async function geocodeAmbiguousLocations(env, limit) {
           UPDATE location_matches
           SET
             status = 'rejected',
-            source = 'geonames_v1',
+            source = ?,
             updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
             AND status = 'ambiguous'
-        `).bind(row.id).run();
+        `).bind(
+          safeResult.source || "geonames_v4",
+          row.id
+        ).run();
 
         rejected++;
       } else {
@@ -1544,15 +1562,16 @@ async function geocodeAmbiguousLocations(env, limit) {
 }
 
 /**
- * Conservative validation for automatic matches.
+ * Additional conservative validation of GeoNames results.
  *
- * For this first integration we only accept
- * locality matches with explicit country hints.
- * Country and region proxies remain handled by
- * the local dictionary or manual review.
+ * Country-only locations can use a capital-city proxy,
+ * provided the geocoder explicitly marked that result
+ * as country_capital_proxy.
  *
- * Complex, multi-place or unqualified names
- * remain ambiguous.
+ * Region proxies still require manual review.
+ *
+ * Locality matches must start with the recognised
+ * city name and have confidence 1.
  */
 function isSafeGeocoderMatch(rawLocation, result) {
   if (result.status !== "matched") {
@@ -1565,27 +1584,33 @@ function isSafeGeocoderMatch(rawLocation, result) {
     reason: "requires_manual_review"
   };
 
-  if (result.location_type !== "locality") {
+  if (
+    !["locality", "country_proxy", "region_proxy"]
+      .includes(result.location_type)
+  ) {
     return ambiguousResult;
   }
 
   if (
     !result.country ||
-    !result.city ||
     !Number.isFinite(Number(result.lat)) ||
-    !Number.isFinite(Number(result.lon))
+    !Number.isFinite(Number(result.lon)) ||
+    result.confidence !== 1
   ) {
     return ambiguousResult;
   }
 
-  // Require exactly "place, country" for now.
-  // This excludes "Dhaka Feni" and complex addresses.
-  const parts = rawLocation
-    .split(",")
-    .map(part => part.trim())
-    .filter(Boolean);
+  if (result.location_type === "country_proxy") {
+    return result.reason === "country_capital_proxy"
+      ? result
+      : ambiguousResult;
+  }
 
-  if (parts.length !== 2) {
+  if (result.location_type === "region_proxy") {
+    return ambiguousResult;
+  }
+
+  if (!result.city) {
     return ambiguousResult;
   }
 
@@ -1595,18 +1620,16 @@ function isSafeGeocoderMatch(rawLocation, result) {
       .replace(/\p{M}/gu, "")
       .toLowerCase()
       .replace(/[^\p{L}\p{N}]+/gu, " ")
-      .trim();
+      .trim()
+      .replace(/\s+/g, " ");
 
-  const place = normalize(parts[0]);
+  const original = normalize(rawLocation);
   const city = normalize(result.city);
 
-  if (place !== city) {
-    return ambiguousResult;
-  }
-
-  // The geocoder itself must have recognized
-  // the country hint and awarded exact score.
-  if (result.confidence !== 1) {
+  if (
+    original !== city &&
+    !original.startsWith(city + " ")
+  ) {
     return ambiguousResult;
   }
 
