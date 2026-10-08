@@ -1,89 +1,82 @@
 
 /**
  * Hive Census — Hive Profile Map
- * GeoNames Geocoder v0.2.1
+ * GeoNames Geocoder v0.2.2
  *
  * Conservative geographic matching for public
  * Hive profile.location values.
  *
- * Features:
- * - Normalizes common separators and punctuation.
- * - Recognizes "city, country" and "city country".
- * - Handles country-only values as country proxies.
- * - Rejects clearly non-geographic descriptions.
- * - Avoids automatically resolving ambiguous places.
- * - Does not write to D1.
+ * Country-only values use capital-city coordinates
+ * as country proxies, never as evidence of residence.
  *
- * Country and region proxies are representative
- * coordinates, not evidence of actual residence.
+ * Does not write to D1.
  */
 
-const VERSION = "0.2.1";
+const VERSION = "0.2.2";
 
 const GEONAMES_URL =
   "https://secure.geonames.org/searchJSON";
 
-const MIN_CONFIDENCE = 0.85;
 const MAX_RESULTS = 10;
 const REQUEST_TIMEOUT_MS = 12000;
 
 const COUNTRY_DATA = [
-  ["PL", "Poland", ["polska"]],
-  ["BD", "Bangladesh", ["bd"]],
-  ["IN", "India", []],
-  ["US", "United States", [
-    "usa", "us", "united states of america"
-  ]],
-  ["CA", "Canada", []],
-  ["VE", "Venezuela", []],
-  ["ID", "Indonesia", []],
-  ["NG", "Nigeria", []],
-  ["PK", "Pakistan", []],
-  ["DE", "Germany", ["deutschland"]],
-  ["MY", "Malaysia", []],
-  ["AU", "Australia", []],
-  ["MU", "Mauritius", []],
-  ["ZA", "South Africa", []],
-  ["GB", "United Kingdom", [
-    "uk", "great britain", "britain"
-  ]],
-  ["SG", "Singapore", []],
-  ["FR", "France", []],
-  ["ES", "Spain", ["espana", "españa"]],
-  ["IT", "Italy", ["italia"]],
-  ["BR", "Brazil", ["brasil"]],
-  ["AR", "Argentina", []],
-  ["MX", "Mexico", ["méxico"]],
-  ["JP", "Japan", []],
-  ["KR", "South Korea", ["republic of korea"]],
-  ["PH", "Philippines", []],
-  ["TH", "Thailand", []],
-  ["VN", "Vietnam", []],
-  ["TR", "Türkiye", ["turkey", "turkiye"]],
-  ["UA", "Ukraine", []],
-  ["NL", "Netherlands", ["holland"]],
-  ["BE", "Belgium", []],
-  ["CH", "Switzerland", []],
-  ["AT", "Austria", []],
-  ["SE", "Sweden", []],
-  ["NO", "Norway", []],
-  ["DK", "Denmark", []],
-  ["FI", "Finland", []],
-  ["IE", "Ireland", []],
-  ["PT", "Portugal", []],
-  ["CZ", "Czechia", ["czech republic"]],
-  ["SK", "Slovakia", []],
-  ["HU", "Hungary", []],
-  ["RO", "Romania", []],
-  ["GR", "Greece", []],
-  ["EG", "Egypt", []],
-  ["KE", "Kenya", []],
-  ["GH", "Ghana", []],
-  ["CO", "Colombia", []],
-  ["PE", "Peru", []],
-  ["CL", "Chile", []],
-  ["NZ", "New Zealand", []],
-  ["SR", "Suriname", []]
+  ["PL", "Poland", "Warsaw", ["polska"]],
+  ["BD", "Bangladesh", "Dhaka", ["bd"]],
+  ["IN", "India", "New Delhi", []],
+  ["US", "United States", "Washington, D.C.",
+    ["usa", "us", "united states of america"]],
+  ["CA", "Canada", "Ottawa", []],
+  ["VE", "Venezuela", "Caracas", []],
+  ["ID", "Indonesia", "Jakarta", []],
+  ["NG", "Nigeria", "Abuja", []],
+  ["PK", "Pakistan", "Islamabad", []],
+  ["DE", "Germany", "Berlin", ["deutschland"]],
+  ["MY", "Malaysia", "Kuala Lumpur", []],
+  ["AU", "Australia", "Canberra", []],
+  ["MU", "Mauritius", "Port Louis", []],
+  ["ZA", "South Africa", "Pretoria", []],
+  ["GB", "United Kingdom", "London",
+    ["uk", "great britain", "britain"]],
+  ["SG", "Singapore", "Singapore", []],
+  ["FR", "France", "Paris", []],
+  ["ES", "Spain", "Madrid", ["espana", "españa"]],
+  ["IT", "Italy", "Rome", ["italia"]],
+  ["BR", "Brazil", "Brasília", ["brasil"]],
+  ["AR", "Argentina", "Buenos Aires", []],
+  ["MX", "Mexico", "Mexico City", ["méxico"]],
+  ["JP", "Japan", "Tokyo", []],
+  ["KR", "South Korea", "Seoul",
+    ["republic of korea"]],
+  ["PH", "Philippines", "Manila", []],
+  ["TH", "Thailand", "Bangkok", []],
+  ["VN", "Vietnam", "Hanoi", []],
+  ["TR", "Türkiye", "Ankara",
+    ["turkey", "turkiye"]],
+  ["UA", "Ukraine", "Kyiv", []],
+  ["NL", "Netherlands", "Amsterdam", ["holland"]],
+  ["BE", "Belgium", "Brussels", []],
+  ["CH", "Switzerland", "Bern", []],
+  ["AT", "Austria", "Vienna", []],
+  ["SE", "Sweden", "Stockholm", []],
+  ["NO", "Norway", "Oslo", []],
+  ["DK", "Denmark", "Copenhagen", []],
+  ["FI", "Finland", "Helsinki", []],
+  ["IE", "Ireland", "Dublin", []],
+  ["PT", "Portugal", "Lisbon", []],
+  ["CZ", "Czechia", "Prague", ["czech republic"]],
+  ["SK", "Slovakia", "Bratislava", []],
+  ["HU", "Hungary", "Budapest", []],
+  ["RO", "Romania", "Bucharest", []],
+  ["GR", "Greece", "Athens", []],
+  ["EG", "Egypt", "Cairo", []],
+  ["KE", "Kenya", "Nairobi", []],
+  ["GH", "Ghana", "Accra", []],
+  ["CO", "Colombia", "Bogotá", []],
+  ["PE", "Peru", "Lima", []],
+  ["CL", "Chile", "Santiago", []],
+  ["NZ", "New Zealand", "Wellington", []],
+  ["SR", "Suriname", "Paramaribo", []]
 ];
 
 const NON_GEOGRAPHIC = new Set([
@@ -94,11 +87,13 @@ const NON_GEOGRAPHIC = new Set([
   "planet",
   "planet earth",
   "cool planet",
+  "mars",
   "everywhere",
   "anywhere",
   "somewhere",
   "nowhere",
   "near you",
+  "home",
   "online",
   "internet",
   "metaverse",
@@ -110,7 +105,9 @@ const NON_GEOGRAPHIC = new Set([
   "digital nomad",
   "virtual world",
   "crypto",
-  "btc earn cryptotab browser"
+  "btc earn cryptotab browser",
+  "i live on planet hive",
+  "steemit victims defence league"
 ]);
 
 function normalizeText(value) {
@@ -140,33 +137,28 @@ export function normalizeGeocoderQuery(value) {
 
 const countryAliases = new Map();
 
-for (const [code, name, aliases] of COUNTRY_DATA) {
+for (const [code, name, capital, aliases] of COUNTRY_DATA) {
+  const country = { code, name, capital };
+
   for (const alias of [name, ...aliases]) {
-    countryAliases.set(
-      normalizeText(alias),
-      { code, name }
-    );
+    countryAliases.set(normalizeText(alias), country);
   }
 }
+
+const sortedCountryAliases =
+  [...countryAliases.entries()]
+    .sort((a, b) => b[0].length - a[0].length);
 
 function isNonGeographicLocation(value) {
   const normalized = normalizeText(value);
 
   return (
     !normalized ||
-    NON_GEOGRAPHIC.has(normalized)
+    NON_GEOGRAPHIC.has(normalized) ||
+    /^@[\w.-]+$/.test(String(value).trim())
   );
 }
 
-/**
- * Resolve a country suffix only when it is
- * explicitly recognized in our country dictionary.
- *
- * Examples:
- * "Lagos, Nigeria" -> Lagos / NG
- * "stockholm sweden" -> stockholm / SE
- * "Durban city South Africa" -> Durban city / ZA
- */
 function parseLocation(value) {
   const query = normalizeGeocoderQuery(value);
   const normalized = normalizeText(query);
@@ -177,40 +169,34 @@ function parseLocation(value) {
   if (standaloneCountry) {
     return {
       query,
-      placeQuery: query,
+      placeQuery: standaloneCountry.capital,
       countryHint: standaloneCountry.code,
-      countryOnly: true
+      countryOnly: true,
+      country: standaloneCountry
     };
   }
 
-  const commaParts = query
+  const parts = query
     .split(",")
     .map(part => part.trim())
     .filter(Boolean);
 
-  if (commaParts.length >= 2) {
-    const lastPart = normalizeText(
-      commaParts[commaParts.length - 1]
-    );
-
-    const country = countryAliases.get(lastPart);
+  if (parts.length >= 2) {
+    const last = normalizeText(parts[parts.length - 1]);
+    const country = countryAliases.get(last);
 
     if (country) {
       return {
         query,
-        placeQuery: commaParts
-          .slice(0, -1)
-          .join(", "),
+        placeQuery: parts.slice(0, -1).join(", "),
         countryHint: country.code,
-        countryOnly: false
+        countryOnly: false,
+        country: null
       };
     }
   }
 
-  const countryNames = [...countryAliases.entries()]
-    .sort((a, b) => b[0].length - a[0].length);
-
-  for (const [alias, country] of countryNames) {
+  for (const [alias, country] of sortedCountryAliases) {
     if (
       normalized.endsWith(` ${alias}`) &&
       normalized.length > alias.length + 1
@@ -228,7 +214,8 @@ function parseLocation(value) {
           query,
           placeQuery: placeWords.join(" "),
           countryHint: country.code,
-          countryOnly: false
+          countryOnly: false,
+          country: null
         };
       }
     }
@@ -238,7 +225,8 @@ function parseLocation(value) {
     query,
     placeQuery: query,
     countryHint: null,
-    countryOnly: false
+    countryOnly: false,
+    country: null
   };
 }
 
@@ -254,12 +242,12 @@ function getLocationType(item) {
     return "country_proxy";
   }
 
-  if (item.fcl === "A") {
-    return "region_proxy";
-  }
-
   if (item.fcl === "P") {
     return "locality";
+  }
+
+  if (item.fcl === "A") {
+    return "region_proxy";
   }
 
   return null;
@@ -277,7 +265,7 @@ function ambiguous(reason, count = 0) {
     lat: null,
     lon: null,
     confidence: null,
-    source: "geonames_v2",
+    source: "geonames_v3",
     reason,
     candidates_considered: count
   };
@@ -290,70 +278,133 @@ function rejected(reason) {
   };
 }
 
-function normalizeCandidate(item) {
-  const type = getLocationType(item);
+function validCandidate(item) {
+  if (!item || !getLocationType(item)) {
+    return false;
+  }
+
+  if (
+    item.lat === null ||
+    item.lat === undefined ||
+    item.lng === null ||
+    item.lng === undefined
+  ) {
+    return false;
+  }
+
+  const lat = Number(item.lat);
+  const lon = Number(item.lng);
+
+  return (
+    Number.isFinite(lat) &&
+    Number.isFinite(lon) &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lon >= -180 &&
+    lon <= 180
+  );
+}
+
+function getCandidateNames(item) {
+  return [
+    item.toponymName,
+    item.name,
+    item.asciiName
+  ]
+    .filter(Boolean)
+    .map(normalizeText);
+}
+
+function exactNameMatch(expected, item) {
+  return getCandidateNames(item).includes(
+    normalizeText(expected)
+  );
+}
+
+function getPriority(item, countryOnly) {
+  if (countryOnly) {
+    if (item.fcode === "PPLC") return 100;
+    if (item.fcode === "PPL") return 80;
+    if (item.fcl === "P") return 70;
+    return 0;
+  }
+
+  if (item.fcode === "PPLC") return 100;
+  if (item.fcode === "PPLA") return 95;
+  if (item.fcode === "PPLA2") return 90;
+  if (item.fcode === "PPLA3") return 85;
+  if (item.fcode === "PPL") return 80;
+  if (item.fcl === "P") return 70;
+  if (item.fcode === "ADM1") return 60;
+  if (item.fcl === "A") return 50;
+
+  return 0;
+}
+
+function normalizeCandidate(item, parsed) {
+  const type = parsed.countryOnly
+    ? "country_proxy"
+    : getLocationType(item);
 
   return {
     location_type: type,
     country: item.countryCode || null,
     country_name: item.countryName || null,
-    region: item.adminCode1 || null,
-    region_name: item.adminName1 || null,
-    city:
-      type === "locality"
-        ? item.toponymName || item.name || null
-        : type === "region_proxy"
-          ? item.toponymName || item.name || null
-          : null,
+    region: parsed.countryOnly
+      ? null
+      : item.adminCode1 || null,
+    region_name: parsed.countryOnly
+      ? null
+      : item.adminName1 || null,
+    city: item.toponymName || item.name || null,
     lat: Number(item.lat),
     lon: Number(item.lng),
-    source: "geonames_v2"
+    source: "geonames_v3"
   };
 }
 
-function scoreCandidate(
-  expectedName,
-  item,
-  countryHint,
-  countryOnly
-) {
-  const type = getLocationType(item);
-
-  if (!type) {
-    return 0;
+function candidateScore(item, parsed) {
+  if (!validCandidate(item)) {
+    return null;
   }
 
   if (
-    countryHint &&
-    item.countryCode !== countryHint
+    parsed.countryHint &&
+    item.countryCode !== parsed.countryHint
   ) {
-    return 0;
+    return null;
   }
 
-  if (countryOnly && type !== "country_proxy") {
-    return 0;
+  if (
+    parsed.countryOnly &&
+    item.fcl !== "P"
+  ) {
+    return null;
   }
 
-  if (!countryOnly && type === "country_proxy") {
-    return 0;
+  if (
+    !parsed.countryOnly &&
+    getLocationType(item) === "country_proxy"
+  ) {
+    return null;
   }
 
-  const expected = normalizeText(
-    cleanPlaceName(expectedName)
-  );
+  const expected = parsed.countryOnly
+    ? parsed.country.capital
+    : cleanPlaceName(parsed.placeQuery);
 
-  const names = [
-    item.toponymName,
-    item.name
-  ]
-    .filter(Boolean)
-    .map(normalizeText);
-
-  if (names.includes(expected)) {
-    return 1;
+  if (!exactNameMatch(expected, item)) {
+    return null;
   }
 
-  return 0;
+  return {
+    item,
+    priority: getPriority(item, parsed.countryOnly),
+    population: Math.max(
+      0,
+      Number(item.population) || 0
+    )
+  };
 }
 
 export function evaluateGeocoderResults(
@@ -373,43 +424,16 @@ export function evaluateGeocoderResults(
     return ambiguous("no_candidates");
   }
 
-  const expectedName = parsed.countryOnly
-    ? parsed.query
-    : parsed.placeQuery;
-
   const evaluated = candidates
-    .filter(item => {
-      if (!item || !getLocationType(item)) {
-        return false;
+    .map(item => candidateScore(item, parsed))
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (a.priority !== b.priority) {
+        return b.priority - a.priority;
       }
 
-      const lat = Number(item.lat);
-      const lon = Number(item.lng);
-
-      return (
-        item.lat !== null &&
-        item.lat !== undefined &&
-        item.lng !== null &&
-        item.lng !== undefined &&
-        Number.isFinite(lat) &&
-        Number.isFinite(lon) &&
-        lat >= -90 &&
-        lat <= 90 &&
-        lon >= -180 &&
-        lon <= 180
-      );
-    })
-    .map(item => ({
-      item,
-      score: scoreCandidate(
-        expectedName,
-        item,
-        parsed.countryHint,
-        parsed.countryOnly
-      )
-    }))
-    .filter(result => result.score > 0)
-    .sort((a, b) => b.score - a.score);
+      return b.population - a.population;
+    });
 
   if (!evaluated.length) {
     return ambiguous(
@@ -421,16 +445,23 @@ export function evaluateGeocoderResults(
   const best = evaluated[0];
   const second = evaluated[1];
 
-  if (best.score < MIN_CONFIDENCE) {
-    return ambiguous(
-      "low_confidence",
-      candidates.length
-    );
-  }
-
+  /*
+   * If two places share the same name,
+   * type priority alone is insufficient
+   * when both are populated places of
+   * comparable importance.
+   */
   if (
     second &&
-    best.score - second.score < 0.15
+    best.priority === second.priority &&
+    (
+      best.population === second.population ||
+      (
+        best.population > 0 &&
+        second.population > 0 &&
+        second.population / best.population > 0.5
+      )
+    )
   ) {
     return ambiguous(
       "multiple_similar_candidates",
@@ -440,11 +471,12 @@ export function evaluateGeocoderResults(
 
   return {
     status: "matched",
-    ...normalizeCandidate(best.item),
-    confidence: best.score,
-    reason: "automatic_geonames_match",
-    candidates_considered:
-      candidates.length
+    ...normalizeCandidate(best.item, parsed),
+    confidence: 1,
+    reason: parsed.countryOnly
+      ? "country_capital_proxy"
+      : "automatic_geonames_match",
+    candidates_considered: candidates.length
   };
 }
 
@@ -472,7 +504,7 @@ export async function geocodeLocation(
   url.searchParams.set(
     "q",
     parsed.countryOnly
-      ? parsed.query
+      ? parsed.country.capital
       : cleanPlaceName(parsed.placeQuery)
   );
 
@@ -500,8 +532,8 @@ export async function geocodeLocation(
 
   if (parsed.countryOnly) {
     url.searchParams.set(
-      "featureCode",
-      "PCLI"
+      "featureClass",
+      "P"
     );
   }
 
