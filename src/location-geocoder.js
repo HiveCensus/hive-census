@@ -1,22 +1,19 @@
 
 /**
  * Hive Census — Hive Profile Map
- * GeoNames Geocoder v0.2.2
+ * GeoNames Geocoder v0.2.3
  *
- * Conservative geographic matching for public
- * Hive profile.location values.
+ * Conservative matching of public Hive profile.location.
  *
- * Country-only values use capital-city coordinates
- * as country proxies, never as evidence of residence.
- *
- * Does not write to D1.
+ * - Country-only values use capital-city proxies.
+ * - Recognises country and selected administrative hints.
+ * - Does not infer residence from country/region proxies.
+ * - Avoids guessing between similarly named places.
+ * - Does not write to D1.
  */
 
-const VERSION = "0.2.2";
-
-const GEONAMES_URL =
-  "https://secure.geonames.org/searchJSON";
-
+const VERSION = "0.2.3";
+const GEONAMES_URL = "https://secure.geonames.org/searchJSON";
 const MAX_RESULTS = 10;
 const REQUEST_TIMEOUT_MS = 12000;
 
@@ -43,7 +40,7 @@ const COUNTRY_DATA = [
   ["ES", "Spain", "Madrid", ["espana", "españa"]],
   ["IT", "Italy", "Rome", ["italia"]],
   ["BR", "Brazil", "Brasília", ["brasil"]],
-  ["AR", "Argentina", "Buenos Aires", []],
+  ["AR", "Argentina", "Buenos Aires", ["argentinia"]],
   ["MX", "Mexico", "Mexico City", ["méxico"]],
   ["JP", "Japan", "Tokyo", []],
   ["KR", "South Korea", "Seoul",
@@ -76,35 +73,37 @@ const COUNTRY_DATA = [
   ["PE", "Peru", "Lima", []],
   ["CL", "Chile", "Santiago", []],
   ["NZ", "New Zealand", "Wellington", []],
-  ["SR", "Suriname", "Paramaribo", []]
+  ["SR", "Suriname", "Paramaribo", []],
+  ["NP", "Nepal", "Kathmandu", []]
+];
+
+const ADMIN_HINTS = [
+  ["US", "CA", ["california", "ca"]],
+  ["US", "AZ", ["arizona", "az"]],
+  ["US", "SC", ["south carolina"]],
+  ["US", "NY", ["new york"]],
+  ["US", "TX", ["texas"]],
+  ["US", "FL", ["florida"]],
+  ["US", "WA", ["washington state"]],
+  ["US", "CO", ["colorado"]],
+  ["US", "IL", ["illinois"]],
+  ["US", "NV", ["nevada"]],
+  ["US", "OR", ["oregon"]],
+  ["CA", "ON", ["ontario"]],
+  ["CA", "QC", ["quebec", "québec"]],
+  ["CA", "BC", ["british columbia"]],
+  ["CA", "AB", ["alberta"]]
 ];
 
 const NON_GEOGRAPHIC = new Set([
-  "earth",
-  "world",
-  "the world",
-  "whole world",
-  "planet",
-  "planet earth",
-  "cool planet",
-  "mars",
-  "everywhere",
-  "anywhere",
-  "somewhere",
-  "nowhere",
-  "near you",
-  "home",
-  "online",
-  "internet",
-  "metaverse",
-  "universe",
-  "galaxy",
-  "the galaxy",
-  "steemit",
-  "international",
-  "digital nomad",
-  "virtual world",
-  "crypto",
+  "earth", "world", "the world", "whole world",
+  "planet", "planet earth", "cool planet",
+  "mars", "everywhere", "anywhere",
+  "somewhere", "nowhere", "near you", "home",
+  "online", "internet", "metaverse",
+  "universe", "galaxy", "the galaxy",
+  "steemit", "international", "digital nomad",
+  "virtual world", "crypto",
   "btc earn cryptotab browser",
   "i live on planet hive",
   "steemit victims defence league"
@@ -121,9 +120,7 @@ function normalizeText(value) {
 }
 
 export function normalizeGeocoderQuery(value) {
-  if (typeof value !== "string") {
-    return "";
-  }
+  if (typeof value !== "string") return "";
 
   return value
     .normalize("NFKC")
@@ -136,9 +133,11 @@ export function normalizeGeocoderQuery(value) {
 }
 
 const countryAliases = new Map();
+const countriesByCode = new Map();
 
 for (const [code, name, capital, aliases] of COUNTRY_DATA) {
   const country = { code, name, capital };
+  countriesByCode.set(code, country);
 
   for (const alias of [name, ...aliases]) {
     countryAliases.set(normalizeText(alias), country);
@@ -148,6 +147,16 @@ for (const [code, name, capital, aliases] of COUNTRY_DATA) {
 const sortedCountryAliases =
   [...countryAliases.entries()]
     .sort((a, b) => b[0].length - a[0].length);
+
+const adminAliases = new Map();
+
+for (const [country, admin, aliases] of ADMIN_HINTS) {
+  for (const alias of aliases) {
+    const key = normalizeText(alias);
+    if (!adminAliases.has(key)) adminAliases.set(key, []);
+    adminAliases.get(key).push({ country, admin });
+  }
+}
 
 function isNonGeographicLocation(value) {
   const normalized = normalizeText(value);
@@ -163,68 +172,75 @@ function parseLocation(value) {
   const query = normalizeGeocoderQuery(value);
   const normalized = normalizeText(query);
 
-  const standaloneCountry =
-    countryAliases.get(normalized);
+  const standaloneCountry = countryAliases.get(normalized);
 
   if (standaloneCountry) {
     return {
       query,
       placeQuery: standaloneCountry.capital,
       countryHint: standaloneCountry.code,
+      adminHint: null,
       countryOnly: true,
       country: standaloneCountry
     };
   }
 
-  const parts = query
-    .split(",")
-    .map(part => part.trim())
-    .filter(Boolean);
+  let placeQuery = query;
+  let countryHint = null;
+  let adminHint = null;
+
+  const parts = query.split(",").map(x => x.trim()).filter(Boolean);
 
   if (parts.length >= 2) {
     const last = normalizeText(parts[parts.length - 1]);
     const country = countryAliases.get(last);
 
     if (country) {
-      return {
-        query,
-        placeQuery: parts.slice(0, -1).join(", "),
-        countryHint: country.code,
-        countryOnly: false,
-        country: null
-      };
+      countryHint = country.code;
+      placeQuery = parts.slice(0, -1).join(", ");
     }
   }
 
-  for (const [alias, country] of sortedCountryAliases) {
-    if (
-      normalized.endsWith(` ${alias}`) &&
-      normalized.length > alias.length + 1
-    ) {
-      const words = normalized.split(" ");
-      const aliasWords = alias.split(" ");
+  if (!countryHint) {
+    for (const [alias, country] of sortedCountryAliases) {
+      if (normalized.endsWith(" " + alias)) {
+        const words = normalized.split(" ");
+        const count = alias.split(" ").length;
+        const remaining = words.slice(0, -count).join(" ");
 
-      const placeWords = words.slice(
-        0,
-        words.length - aliasWords.length
-      );
-
-      if (placeWords.length) {
-        return {
-          query,
-          placeQuery: placeWords.join(" "),
-          countryHint: country.code,
-          countryOnly: false,
-          country: null
-        };
+        if (remaining) {
+          countryHint = country.code;
+          placeQuery = remaining;
+          break;
+        }
       }
+    }
+  }
+
+  const placeParts = placeQuery
+    .split(",")
+    .map(x => x.trim())
+    .filter(Boolean);
+
+  if (placeParts.length >= 2) {
+    const last = normalizeText(placeParts[placeParts.length - 1]);
+    const hints = adminAliases.get(last) || [];
+    const matching = countryHint
+      ? hints.filter(x => x.country === countryHint)
+      : hints;
+
+    if (matching.length === 1) {
+      countryHint = matching[0].country;
+      adminHint = matching[0].admin;
+      placeQuery = placeParts.slice(0, -1).join(", ");
     }
   }
 
   return {
     query,
-    placeQuery: query,
-    countryHint: null,
+    placeQuery,
+    countryHint,
+    adminHint,
     countryOnly: false,
     country: null
   };
@@ -238,24 +254,15 @@ function cleanPlaceName(value) {
 }
 
 function getLocationType(item) {
-  if (item.fcode === "PCLI") {
-    return "country_proxy";
-  }
-
-  if (item.fcl === "P") {
-    return "locality";
-  }
-
-  if (item.fcl === "A") {
-    return "region_proxy";
-  }
-
+  if (item.fcode === "PCLI") return "country_proxy";
+  if (item.fcl === "P") return "locality";
+  if (item.fcl === "A") return "region_proxy";
   return null;
 }
 
-function ambiguous(reason, count = 0) {
+function unresolved(status, reason, count = 0) {
   return {
-    status: "ambiguous",
+    status,
     location_type: null,
     country: null,
     country_name: null,
@@ -265,32 +272,19 @@ function ambiguous(reason, count = 0) {
     lat: null,
     lon: null,
     confidence: null,
-    source: "geonames_v3",
+    source: "geonames_v4",
     reason,
     candidates_considered: count
   };
 }
 
-function rejected(reason) {
-  return {
-    ...ambiguous(reason),
-    status: "rejected"
-  };
-}
-
 function validCandidate(item) {
-  if (!item || !getLocationType(item)) {
-    return false;
-  }
+  if (!item || !getLocationType(item)) return false;
 
   if (
-    item.lat === null ||
-    item.lat === undefined ||
-    item.lng === null ||
-    item.lng === undefined
-  ) {
-    return false;
-  }
+    item.lat === null || item.lat === undefined ||
+    item.lng === null || item.lng === undefined
+  ) return false;
 
   const lat = Number(item.lat);
   const lon = Number(item.lng);
@@ -298,145 +292,109 @@ function validCandidate(item) {
   return (
     Number.isFinite(lat) &&
     Number.isFinite(lon) &&
-    lat >= -90 &&
-    lat <= 90 &&
-    lon >= -180 &&
-    lon <= 180
+    lat >= -90 && lat <= 90 &&
+    lon >= -180 && lon <= 180
   );
 }
 
-function getCandidateNames(item) {
+function exactNameMatch(expected, item) {
+  const name = normalizeText(expected);
+
   return [
     item.toponymName,
     item.name,
     item.asciiName
-  ]
-    .filter(Boolean)
-    .map(normalizeText);
+  ].some(x => x && normalizeText(x) === name);
 }
 
-function exactNameMatch(expected, item) {
-  return getCandidateNames(item).includes(
-    normalizeText(expected)
-  );
-}
-
-function getPriority(item, countryOnly) {
-  if (countryOnly) {
-    if (item.fcode === "PPLC") return 100;
-    if (item.fcode === "PPL") return 80;
-    if (item.fcl === "P") return 70;
-    return 0;
-  }
-
-  if (item.fcode === "PPLC") return 100;
-  if (item.fcode === "PPLA") return 95;
-  if (item.fcode === "PPLA2") return 90;
-  if (item.fcode === "PPLA3") return 85;
-  if (item.fcode === "PPL") return 80;
-  if (item.fcl === "P") return 70;
-  if (item.fcode === "ADM1") return 60;
-  if (item.fcl === "A") return 50;
-
-  return 0;
-}
-
-function normalizeCandidate(item, parsed) {
-  const type = parsed.countryOnly
-    ? "country_proxy"
-    : getLocationType(item);
-
-  return {
-    location_type: type,
-    country: item.countryCode || null,
-    country_name: item.countryName || null,
-    region: parsed.countryOnly
-      ? null
-      : item.adminCode1 || null,
-    region_name: parsed.countryOnly
-      ? null
-      : item.adminName1 || null,
-    city: item.toponymName || item.name || null,
-    lat: Number(item.lat),
-    lon: Number(item.lng),
-    source: "geonames_v3"
+function priority(item) {
+  const priorities = {
+    PPLC: 100,
+    PPLA: 95,
+    PPLA2: 90,
+    PPLA3: 85,
+    PPL: 80,
+    PPLX: 65,
+    ADM1: 60
   };
+
+  return priorities[item.fcode] ??
+    (item.fcl === "P" ? 70 :
+      item.fcl === "A" ? 50 : 0);
 }
 
-function candidateScore(item, parsed) {
-  if (!validCandidate(item)) {
-    return null;
-  }
+function scoreCandidate(item, parsed) {
+  if (!validCandidate(item)) return null;
 
   if (
     parsed.countryHint &&
     item.countryCode !== parsed.countryHint
-  ) {
-    return null;
-  }
+  ) return null;
 
   if (
-    parsed.countryOnly &&
-    item.fcl !== "P"
-  ) {
-    return null;
-  }
+    parsed.adminHint &&
+    String(item.adminCode1 || "").toUpperCase() !==
+      parsed.adminHint
+  ) return null;
+
+  if (parsed.countryOnly && item.fcl !== "P") return null;
 
   if (
     !parsed.countryOnly &&
     getLocationType(item) === "country_proxy"
-  ) {
-    return null;
-  }
+  ) return null;
 
   const expected = parsed.countryOnly
     ? parsed.country.capital
     : cleanPlaceName(parsed.placeQuery);
 
-  if (!exactNameMatch(expected, item)) {
-    return null;
-  }
+  if (!exactNameMatch(expected, item)) return null;
 
   return {
     item,
-    priority: getPriority(item, parsed.countryOnly),
-    population: Math.max(
-      0,
-      Number(item.population) || 0
-    )
+    priority: priority(item),
+    population: Math.max(0, Number(item.population) || 0)
   };
 }
 
-export function evaluateGeocoderResults(
-  rawLocation,
-  candidates
-) {
+function normalizeCandidate(item, parsed) {
+  return {
+    location_type: parsed.countryOnly
+      ? "country_proxy"
+      : getLocationType(item),
+    country: item.countryCode || null,
+    country_name: item.countryName || null,
+    region: parsed.countryOnly ? null : item.adminCode1 || null,
+    region_name: parsed.countryOnly ? null : item.adminName1 || null,
+    city: item.toponymName || item.name || null,
+    lat: Number(item.lat),
+    lon: Number(item.lng),
+    source: "geonames_v4"
+  };
+}
+
+export function evaluateGeocoderResults(rawLocation, candidates) {
   const parsed = parseLocation(rawLocation);
 
   if (isNonGeographicLocation(parsed.query)) {
-    return rejected("non_geographic_location");
+    return unresolved("rejected", "non_geographic_location");
   }
 
-  if (
-    !Array.isArray(candidates) ||
-    candidates.length === 0
-  ) {
-    return ambiguous("no_candidates");
+  if (!Array.isArray(candidates) || !candidates.length) {
+    return unresolved("ambiguous", "no_candidates");
   }
 
   const evaluated = candidates
-    .map(item => candidateScore(item, parsed))
+    .map(item => scoreCandidate(item, parsed))
     .filter(Boolean)
-    .sort((a, b) => {
-      if (a.priority !== b.priority) {
-        return b.priority - a.priority;
-      }
-
-      return b.population - a.population;
-    });
+    .sort((a, b) =>
+      b.priority - a.priority ||
+      b.population - a.population
+    );
 
   if (!evaluated.length) {
-    return ambiguous(
+    return unresolved(
+      "ambiguous",
       "no_matching_candidates",
       candidates.length
     );
@@ -445,12 +403,6 @@ export function evaluateGeocoderResults(
   const best = evaluated[0];
   const second = evaluated[1];
 
-  /*
-   * If two places share the same name,
-   * type priority alone is insufficient
-   * when both are populated places of
-   * comparable importance.
-   */
   if (
     second &&
     best.priority === second.priority &&
@@ -463,7 +415,8 @@ export function evaluateGeocoderResults(
       )
     )
   ) {
-    return ambiguous(
+    return unresolved(
+      "ambiguous",
       "multiple_similar_candidates",
       candidates.length
     );
@@ -480,88 +433,48 @@ export function evaluateGeocoderResults(
   };
 }
 
-export async function geocodeLocation(
-  rawLocation,
-  username
-) {
+export async function geocodeLocation(rawLocation, username) {
   const parsed = parseLocation(rawLocation);
 
   if (isNonGeographicLocation(parsed.query)) {
-    return rejected("non_geographic_location");
+    return unresolved("rejected", "non_geographic_location");
   }
 
-  if (
-    typeof username !== "string" ||
-    !username.trim()
-  ) {
-    throw new Error(
-      "GEONAMES_USERNAME is not configured"
-    );
+  if (typeof username !== "string" || !username.trim()) {
+    throw new Error("GEONAMES_USERNAME is not configured");
   }
 
   const url = new URL(GEONAMES_URL);
-
   url.searchParams.set(
     "q",
-    parsed.countryOnly
-      ? parsed.country.capital
-      : cleanPlaceName(parsed.placeQuery)
+    cleanPlaceName(parsed.placeQuery)
   );
-
-  url.searchParams.set(
-    "maxRows",
-    String(MAX_RESULTS)
-  );
-
-  url.searchParams.set(
-    "username",
-    username
-  );
-
-  url.searchParams.set(
-    "style",
-    "FULL"
-  );
+  url.searchParams.set("maxRows", String(MAX_RESULTS));
+  url.searchParams.set("username", username);
+  url.searchParams.set("style", "FULL");
 
   if (parsed.countryHint) {
-    url.searchParams.set(
-      "country",
-      parsed.countryHint
-    );
+    url.searchParams.set("country", parsed.countryHint);
   }
 
   if (parsed.countryOnly) {
-    url.searchParams.set(
-      "featureClass",
-      "P"
-    );
+    url.searchParams.set("featureClass", "P");
   }
 
-  const response = await fetch(
-    url.toString(),
-    {
-      headers: {
-        Accept: "application/json"
-      },
-      signal: AbortSignal.timeout(
-        REQUEST_TIMEOUT_MS
-      )
-    }
-  );
+  const response = await fetch(url.toString(), {
+    headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  });
 
   if (!response.ok) {
-    throw new Error(
-      `GeoNames HTTP ${response.status}`
-    );
+    throw new Error(`GeoNames HTTP ${response.status}`);
   }
 
   const data = await response.json();
 
   if (data.status) {
     throw new Error(
-      `GeoNames API: ${
-        data.status.message || "unknown error"
-      }`
+      `GeoNames API: ${data.status.message || "unknown error"}`
     );
   }
 
