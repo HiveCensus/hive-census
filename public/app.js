@@ -1,3 +1,4 @@
+
 const $ = id => document.getElementById(id);
 
 let selected = null;
@@ -10,7 +11,7 @@ let publishing = false;
 let unsetting = false;
 let currentCensusRecords = [];
 
-const CENSUS_VERSION = "0.6.6";
+const CENSUS_VERSION = "0.6.7";
 const PROTOCOL_VERSION = 1;
 const CUSTOM_JSON_ID = "hive_census";
 const CENSUS_API = "/api/census";
@@ -2308,7 +2309,7 @@ async function loadCensusMap() {
       !data ||
       data.ok !== true ||
       !Array.isArray(
-        data.census
+        data.accounts
       )
     ) {
       throw new Error(
@@ -2317,7 +2318,7 @@ async function loadCensusMap() {
     }
 
     const activeRecords =
-      data.census.filter(
+      data.accounts.filter(
         validCensusApiRecord
       );
 
