@@ -1,0 +1,884 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0d10">
+
+  <meta
+    name="description"
+    content="Explore approximate locations from public Hive account profiles."
+  >
+
+  <title>Profile Map — Hive Census</title>
+
+  <link rel="icon" href="/assets/hive-logo.png">
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  >
+
+  <link rel="stylesheet" href="/styles.css">
+
+  <style>
+    .profile-page {
+      width: min(1200px, calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    .profile-hero {
+      padding: 75px 0 42px;
+    }
+
+    .profile-hero h1 {
+      margin: 18px 0;
+      font-size: clamp(38px, 5vw, 68px);
+      line-height: 1.08;
+      letter-spacing: -0.045em;
+    }
+
+    .profile-hero h1 b {
+      color: #20a9ff;
+    }
+
+    .profile-hero p {
+      max-width: 760px;
+      color: #aeb9c6;
+      line-height: 1.7;
+    }
+
+    .profile-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .profile-notice {
+      margin-top: 30px;
+      padding: 20px 24px;
+      border: 1px solid #293747;
+      border-left: 3px solid #20a9ff;
+      border-radius: 12px;
+      background: #101922;
+      color: #c6d0db;
+      line-height: 1.7;
+    }
+
+    .profile-notice strong {
+      color: #fff;
+    }
+
+    .profile-map-section {
+      padding: 30px 0 70px;
+    }
+
+    .profile-map-heading {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 18px;
+      margin-bottom: 22px;
+    }
+
+    .profile-map-heading h2 {
+      margin: 12px 0;
+    }
+
+    .profile-map-heading p {
+      color: #aeb9c6;
+    }
+
+    .profile-beta {
+      padding: 9px 14px;
+      border: 1px solid #36506b;
+      border-radius: 20px;
+      color: #79caff;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+    }
+
+    .profile-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    .profile-filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .profile-filter {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 11px 14px;
+      border: 1px solid #2c3642;
+      border-radius: 9px;
+      background: #111923;
+      color: #e4eaf0;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .profile-filter input {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      accent-color: #20a9ff;
+    }
+
+    .profile-dot {
+      display: inline-block;
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .dot-locality {
+      background: #20a9ff;
+    }
+
+    .dot-region {
+      background: #ff9749;
+    }
+
+    .dot-country {
+      background: #b66bff;
+    }
+
+    .profile-map-container {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid #273341;
+      border-radius: 15px;
+      background: #0c1620;
+    }
+
+    #profileMapCanvas {
+      width: 100%;
+      height: 580px;
+      background: #0b1722;
+    }
+
+    .profile-map-summary {
+      position: absolute;
+      z-index: 500;
+      bottom: 20px;
+      left: 20px;
+      padding: 15px 19px;
+      border: 1px solid #2b3947;
+      border-radius: 12px;
+      background: rgba(8, 14, 21, 0.94);
+      color: #fff;
+      pointer-events: none;
+    }
+
+    .profile-map-summary strong {
+      display: block;
+      margin: 5px 0;
+      font-size: 24px;
+      color: #20a9ff;
+    }
+
+    .profile-map-summary span {
+      display: block;
+      color: #aab7c4;
+      font-size: 12px;
+    }
+
+    .profile-map-message {
+      padding: 15px 0;
+      color: #aab7c4;
+      font-size: 13px;
+    }
+
+    .profile-legend {
+      display: flex;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 18px;
+      padding: 14px 0;
+      color: #aebac7;
+      font-size: 12px;
+    }
+
+    .profile-legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .profile-info-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
+      margin-top: 30px;
+    }
+
+    .profile-info-grid .card {
+      padding: 25px;
+    }
+
+    .profile-info-grid h3 {
+      margin-top: 0;
+    }
+
+    .profile-info-grid p {
+      color: #aeb9c6;
+      line-height: 1.7;
+    }
+
+    .profile-info-grid a {
+      color: #42b7ff;
+    }
+
+    .profile-popup {
+      min-width: 170px;
+      color: #1b2632;
+    }
+
+    .profile-popup strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+
+    .profile-popup-count {
+      margin-bottom: 5px;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .profile-popup small {
+      display: block;
+      margin-top: 8px;
+      color: #5a6774;
+      line-height: 1.45;
+    }
+
+    @media (max-width: 700px) {
+      .profile-page {
+        width: calc(100% - 28px);
+      }
+
+      .profile-hero {
+        padding-top: 40px;
+      }
+
+      #profileMapCanvas {
+        height: 470px;
+      }
+
+      .profile-info-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .profile-map-summary {
+        bottom: 10px;
+        left: 10px;
+        padding: 11px 13px;
+      }
+
+      .profile-map-summary strong {
+        font-size: 19px;
+      }
+
+      .profile-filter {
+        padding: 9px 11px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+<header class="topbar">
+
+  <a
+    class="brand"
+    href="/"
+    aria-label="Hive Census home"
+  >
+    <img
+      src="/assets/hive-logo.png"
+      alt=""
+    >
+
+    <span>
+      <strong>HIVE</strong> CENSUS
+    </span>
+  </a>
+
+  <nav aria-label="Main navigation">
+    <a href="/#map">Census Map</a>
+    <a href="/profiles/" aria-current="page">Profile Map</a>
+    <a href="/#join">Join Census</a>
+    <a href="/#about">About</a>
+  </nav>
+
+  <a
+    class="btn btn-red"
+    href="/#join"
+  >
+    Join Census
+  </a>
+
+</header>
+
+
+<main class="profile-page">
+
+  <!-- HERO -->
+
+  <section class="profile-hero">
+
+    <div class="kicker">
+      <span></span>
+      HIVE PROFILE LOCATIONS
+    </div>
+
+    <h1>
+      Where Hive users<br>
+      <b>say they are.</b>
+    </h1>
+
+    <p>
+      Explore locations automatically extracted from
+      public Hive account profiles. Unlike Hive Census,
+      these locations have not been separately confirmed
+      by their account owners for inclusion in this map.
+    </p>
+
+    <div class="profile-actions">
+
+      <a class="btn btn-red" href="/#join">
+        Add my location to Census
+      </a>
+
+      <a class="btn btn-ghost" href="#profile-map">
+        Explore profile locations
+      </a>
+
+    </div>
+
+    <div class="profile-notice">
+
+      <strong>Profile Map is not Hive Census.</strong>
+
+      This experimental map interprets public location
+      fields from Hive account profiles. Some entries
+      identify only a country or region. Their map
+      markers are approximate reference points,
+      not the actual locations of individual users.
+      Profile information may also be outdated
+      or inaccurate.
+
+    </div>
+
+  </section>
+
+
+  <!-- MAP -->
+
+  <section
+    id="profile-map"
+    class="profile-map-section"
+  >
+
+    <div class="profile-map-heading">
+
+      <div>
+
+        <div class="kicker">
+          <span></span>
+          LOCATIONS FROM HIVE PROFILES
+        </div>
+
+        <h2>Explore profile locations</h2>
+
+        <p>
+          Public profile data · Automated classification
+          · Approximate locations
+        </p>
+
+      </div>
+
+      <span class="profile-beta">
+        EXPERIMENTAL · BETA
+      </span>
+
+    </div>
+
+
+    <!-- FILTERS -->
+
+    <div class="profile-toolbar">
+
+      <div class="profile-filters">
+
+        <label class="profile-filter">
+          <input
+            type="checkbox"
+            id="filterLocality"
+            checked
+          >
+          <span class="profile-dot dot-locality"></span>
+          Cities &amp; towns
+        </label>
+
+        <label class="profile-filter">
+          <input
+            type="checkbox"
+            id="filterRegion"
+            checked
+          >
+          <span class="profile-dot dot-region"></span>
+          Regions
+        </label>
+
+        <label class="profile-filter">
+          <input
+            type="checkbox"
+            id="filterCountry"
+            checked
+          >
+          <span class="profile-dot dot-country"></span>
+          Countries
+        </label>
+
+      </div>
+
+      <span id="profileMapCount" class="muted">
+        Loading profile locations…
+      </span>
+
+    </div>
+
+
+    <!-- LEAFLET MAP -->
+
+    <div class="profile-map-container">
+
+      <div
+        id="profileMapCanvas"
+        role="application"
+        aria-label="Interactive map of Hive profile locations"
+      ></div>
+
+      <div class="profile-map-summary">
+
+        <span>
+          Accounts represented on the map
+        </span>
+
+        <strong id="profileAccountCount">—</strong>
+
+        <span id="profileLocationCount">
+          Loading…
+        </span>
+
+      </div>
+
+    </div>
+
+
+    <div
+      id="profileMapMessage"
+      class="profile-map-message"
+      role="status"
+      aria-live="polite"
+    >
+      Loading locations from public Hive profiles…
+    </div>
+
+
+    <!-- LEGEND -->
+
+    <div class="profile-legend">
+
+      <span>
+        <i class="profile-dot dot-locality"></i>
+        City or town
+      </span>
+
+      <span>
+        <i class="profile-dot dot-region"></i>
+        Region (approximate)
+      </span>
+
+      <span>
+        <i class="profile-dot dot-country"></i>
+        Country (approximate)
+      </span>
+
+    </div>
+
+
+    <!-- INFORMATION -->
+
+    <div class="profile-info-grid">
+
+      <div class="card">
+
+        <h3>About this data</h3>
+
+        <p>
+          Locations are collected from publicly available
+          Hive account profile location fields.
+          The system classifies and geocodes
+          those declarations automatically.
+        </p>
+
+        <p>
+          A location shown here is not proof of
+          residence, nationality or a user's
+          current whereabouts.
+        </p>
+
+      </div>
+
+      <div class="card">
+
+        <h3>Why join Hive Census?</h3>
+
+        <p>
+          Hive Census is a separate, voluntary project.
+          Participants choose a locality and publish
+          a signed declaration on the Hive blockchain.
+          This makes Census declarations more explicit
+          than automatically interpreted profile data.
+        </p>
+
+        <a href="/#join">
+          Join the on-chain Census →
+        </a>
+
+      </div>
+
+    </div>
+
+  </section>
+
+</main>
+
+
+<footer>
+
+  <span>Hive Census</span>
+
+  <span>
+    Profile locations · Experimental
+  </span>
+
+  <span>
+    Created by
+    <a
+      href="https://hive.blog/@jocieprosza"
+      target="_blank"
+      rel="noopener noreferrer"
+    >@jocieprosza</a>
+  </span>
+
+</footer>
+
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+(function () {
+  "use strict";
+
+  const API_URL = "/api/profiles/map";
+
+  const COLORS = {
+    locality: "#20a9ff",
+    region_proxy: "#ff9749",
+    country_proxy: "#b66bff"
+  };
+
+  const TYPE_LABELS = {
+    locality: "City or town",
+    region_proxy: "Region (approximate)",
+    country_proxy: "Country (approximate)"
+  };
+
+  const filterLocality =
+    document.getElementById("filterLocality");
+
+  const filterRegion =
+    document.getElementById("filterRegion");
+
+  const filterCountry =
+    document.getElementById("filterCountry");
+
+  const accountCountElement =
+    document.getElementById("profileAccountCount");
+
+  const locationCountElement =
+    document.getElementById("profileLocationCount");
+
+  const mapCountElement =
+    document.getElementById("profileMapCount");
+
+  const messageElement =
+    document.getElementById("profileMapMessage");
+
+  const formatter = new Intl.NumberFormat("en-US");
+
+  let locations = [];
+
+  const map = L.map("profileMapCanvas", {
+    zoomControl: true,
+    worldCopyJump: true,
+    minZoom: 2
+  }).setView([18, 12], 2);
+
+  L.tileLayer(
+    "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    {
+      maxZoom: 19,
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }
+  ).addTo(map);
+
+  const markersLayer = L.layerGroup().addTo(map);
+
+  function formatNumber(value) {
+    return formatter.format(value);
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function getSelectedTypes() {
+    const selected = new Set();
+
+    if (filterLocality.checked) {
+      selected.add("locality");
+    }
+
+    if (filterRegion.checked) {
+      selected.add("region_proxy");
+    }
+
+    if (filterCountry.checked) {
+      selected.add("country_proxy");
+    }
+
+    return selected;
+  }
+
+  function getLocationLabel(location) {
+    if (location.location_type === "country_proxy") {
+      return location.country_name ||
+        location.country ||
+        "Unknown country";
+    }
+
+    if (location.location_type === "region_proxy") {
+      return [
+        location.region_name || location.region,
+        location.country_name || location.country
+      ].filter(Boolean).join(", ");
+    }
+
+    return [
+      location.city,
+      location.country_name || location.country
+    ].filter(Boolean).join(", ");
+  }
+
+  function buildPopup(location) {
+    const label = escapeHtml(getLocationLabel(location));
+
+    const count = Number(location.accounts) || 0;
+
+    const type = location.location_type;
+
+    let description;
+
+    if (type === "country_proxy") {
+      description =
+        "This marker represents a country, " +
+        "not the user's actual city.";
+    } else if (type === "region_proxy") {
+      description =
+        "This marker represents a region, " +
+        "not an exact city.";
+    } else {
+      description =
+        "This marker represents a named locality, " +
+        "not a precise address.";
+    }
+
+    return `
+      <div class="profile-popup">
+        <strong>${label}</strong>
+        <div class="profile-popup-count">
+          ${formatNumber(count)} accounts
+        </div>
+        <div>
+          ${escapeHtml(TYPE_LABELS[type] || "Location")}
+        </div>
+        <small>${escapeHtml(description)}</small>
+      </div>
+    `;
+  }
+
+  function getMarkerRadius(count) {
+    return Math.min(
+      20,
+      Math.max(5, 4 + Math.sqrt(count) * 0.65)
+    );
+  }
+
+  function renderLocations() {
+    markersLayer.clearLayers();
+
+    const selectedTypes = getSelectedTypes();
+
+    let visibleLocations = 0;
+    let visibleAccounts = 0;
+
+    for (const location of locations) {
+      if (!selectedTypes.has(location.location_type)) {
+        continue;
+      }
+
+      const lat = Number(location.lat);
+      const lon = Number(location.lon);
+      const count = Number(location.accounts) || 0;
+
+      if (
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lon) ||
+        lat < -90 ||
+        lat > 90 ||
+        lon < -180 ||
+        lon > 180
+      ) {
+        continue;
+      }
+
+      const color =
+        COLORS[location.location_type] || COLORS.locality;
+
+      const marker = L.circleMarker([lat, lon], {
+        radius: getMarkerRadius(count),
+        color: color,
+        fillColor: color,
+        fillOpacity: 0.68,
+        opacity: 0.95,
+        weight: 1.5
+      });
+
+      marker.bindPopup(buildPopup(location));
+      marker.addTo(markersLayer);
+
+      visibleLocations++;
+      visibleAccounts += count;
+    }
+
+    accountCountElement.textContent =
+      formatNumber(visibleAccounts);
+
+    locationCountElement.textContent =
+      `${formatNumber(visibleLocations)} location groups`;
+
+    mapCountElement.textContent =
+      `${formatNumber(visibleLocations)} groups · ` +
+      `${formatNumber(visibleAccounts)} accounts`;
+
+    if (visibleLocations === 0) {
+      messageElement.textContent =
+        "No locations match the selected filters.";
+    } else {
+      messageElement.textContent =
+        "Locations are automatically interpreted " +
+        "and may be approximate. The map is updated " +
+        "as additional profiles are processed.";
+    }
+  }
+
+  async function loadLocations() {
+    try {
+      const response = await fetch(API_URL, {
+        cache: "no-store"
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.ok || !Array.isArray(data.locations)) {
+        throw new Error("Unexpected API response");
+      }
+
+      locations = data.locations.filter(location =>
+        location &&
+        typeof location === "object" &&
+        Object.prototype.hasOwnProperty.call(
+          COLORS,
+          location.location_type
+        )
+      );
+
+      renderLocations();
+
+    } catch (error) {
+      console.error("Profile Map error:", error);
+
+      messageElement.textContent =
+        "Unable to load profile locations. " +
+        "Please try again later.";
+
+      mapCountElement.textContent =
+        "Profile data unavailable";
+
+      accountCountElement.textContent = "—";
+      locationCountElement.textContent = "—";
+    }
+  }
+
+  filterLocality.addEventListener(
+    "change",
+    renderLocations
+  );
+
+  filterRegion.addEventListener(
+    "change",
+    renderLocations
+  );
+
+  filterCountry.addEventListener(
+    "change",
+    renderLocations
+  );
+
+  loadLocations();
+
+})();
+</script>
+
+</body>
+</html>
