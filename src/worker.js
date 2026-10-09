@@ -27,7 +27,7 @@ const PROFILE_LOOKUP_BATCH_SIZE = 100;
 const PROFILE_FETCH_BATCH_SIZE = 100;
 
 const LOCATION_CLASSIFY_PER_RUN = 100;
-const GEOCODE_PER_RUN = 5;
+const GEOCODE_PER_RUN = 10;
 const GEOCODE_ERROR_RETRY_HOURS = 24;
 
 // ============================================================
