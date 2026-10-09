@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="en">
 <head>
@@ -25,7 +26,7 @@
 
   <a
     class="brand"
-    href="#top"
+    href="/#top"
     aria-label="Hive Census home"
   >
     <img
@@ -38,10 +39,11 @@
     </span>
   </a>
 
-  <nav>
-    <a href="#map">Map</a>
-    <a href="#join">Join Census</a>
-    <a href="#about">About</a>
+  <nav aria-label="Main navigation">
+    <a href="/#map" aria-current="page">Census Map</a>
+    <a href="/profiles">Profile Map</a>
+    <a href="/#join">Join Census</a>
+    <a href="/#about">About</a>
   </nav>
 
   <button
@@ -127,7 +129,7 @@
   </section>
 
 
-  <!-- MAP -->
+  <!-- ON-CHAIN CENSUS MAP -->
 
   <section
     id="map"
@@ -140,12 +142,17 @@
 
         <div class="kicker">
           <span></span>
-          THE MAP
+          ON-CHAIN CENSUS
         </div>
 
         <h2>
           Explore the Hive community
         </h2>
+
+        <p class="muted">
+          Locations voluntarily declared by Hive users
+          and recorded on the Hive blockchain.
+        </p>
 
       </div>
 
@@ -191,6 +198,40 @@
         </span>
 
       </div>
+
+    </div>
+
+    <!-- SEPARATE PROFILE MAP DISCOVERY -->
+
+    <div
+      class="card"
+      style="margin-top:24px"
+    >
+
+      <div class="kicker">
+        <span></span>
+        ANOTHER WAY TO EXPLORE HIVE
+      </div>
+
+      <h3>
+        Discover locations from public Hive profiles
+      </h3>
+
+      <p class="muted">
+        Not everyone has joined Hive Census yet.
+        Our separate Profile Map explores locations
+        automatically extracted from public Hive profiles.
+        These locations may be approximate, incomplete
+        or ambiguous, and they are not voluntary
+        Census declarations.
+      </p>
+
+      <a
+        class="btn btn-dark"
+        href="/profiles"
+      >
+        Explore Profile Map →
+      </a>
 
     </div>
 
