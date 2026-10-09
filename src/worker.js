@@ -1,4 +1,3 @@
-
 import {
   classifyLocation,
   getClassifierVersion
@@ -1568,7 +1567,9 @@ async function geocodeAmbiguousLocations(env, limit) {
  * provided the geocoder explicitly marked that result
  * as country_capital_proxy.
  *
- * Region proxies still require manual review.
+ * Region proxies can be accepted only when the geocoder
+ * explicitly confirms a region_capital_proxy with country,
+ * region code, region name, and capital city.
  *
  * Locality matches must start with the recognised
  * city name and have confidence 1.
@@ -1607,7 +1608,18 @@ function isSafeGeocoderMatch(rawLocation, result) {
   }
 
   if (result.location_type === "region_proxy") {
-    return ambiguousResult;
+    const verifiedRegionCapital =
+      result.reason === "region_capital_proxy" &&
+      typeof result.region === "string" &&
+      result.region.trim().length > 0 &&
+      typeof result.region_name === "string" &&
+      result.region_name.trim().length > 0 &&
+      typeof result.city === "string" &&
+      result.city.trim().length > 0;
+
+    return verifiedRegionCapital
+      ? result
+      : ambiguousResult;
   }
 
   if (!result.city) {
