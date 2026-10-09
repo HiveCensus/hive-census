@@ -1,3 +1,4 @@
+
 import {
   classifyLocation,
   getClassifierVersion
@@ -8,20 +9,18 @@ import {
   getGeocoderVersion
 } from "./location-geocoder.js";
 
-const VERSION = "0.9.4";
+const VERSION = "0.9.5";
 const HIVE_RPC = "https://api.hive.blog";
 const CENSUS_ID = "hive_census";
 const PROTOCOL_VERSION = 1;
 
-const DEFAULT_MANUAL_SCAN_BLOCKS = 500;
+const DEFAULT_MANUAL_SCAN_BLOCKS = 250;
 const MAX_MANUAL_SCAN_BLOCKS = 1000;
 
-const NORMAL_SCAN_BLOCKS = 250;
-const CATCHUP_SCAN_BLOCKS = 600;
-const AGGRESSIVE_SCAN_BLOCKS = 1000;
+const SCHEDULED_SCAN_BLOCKS = 250;
 const BLOCK_BATCH_SIZE = 100;
 
-const PROFILE_ACCOUNTS_PER_RUN = 500;
+const PROFILE_ACCOUNTS_PER_RUN = 100;
 const PROFILE_LOOKUP_BATCH_SIZE = 100;
 const PROFILE_FETCH_BATCH_SIZE = 100;
 
@@ -134,7 +133,22 @@ export default {
           last_scheduled_run: lastScheduledRun,
           last_successful_scan: lastSuccessfulScan,
           last_error: lastError,
-          last_error_at: lastErrorAt
+          last_error_at: lastErrorAt,
+          last_scan_started: await getMeta(
+            env,
+            "last_scan_started"
+          ),
+          last_scan_completed: await getMeta(
+            env,
+            "last_scan_completed"
+          ),
+          last_scan_blocks: await getMetaNumber(
+            env,
+            "last_scan_blocks",
+            0
+          ),
+          scheduled_scan_blocks:
+            SCHEDULED_SCAN_BLOCKS
         });
       } catch (error) {
         return errorResponse(error);
@@ -309,7 +323,12 @@ export default {
   },
 
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(runScheduledJobs(env));
+    ctx.waitUntil(
+      runScheduledJobs(
+        env,
+        controller.scheduledTime
+      )
+    );
   }
 };
 
@@ -317,12 +336,18 @@ export default {
 // SCHEDULED JOBS
 // ============================================================
 
-async function runScheduledJobs(env) {
-  const jobs = [
-    {
-      name: "census",
-      run: () => runScheduledIndexer(env)
-    },
+/**
+ * Census is always the first job.
+ *
+ * Only one secondary job runs per Cron execution:
+ * classifier -> geocoder -> profiles.
+ *
+ * The phase is derived from scheduledTime, not
+ * a mutable D1 counter, so failed executions do
+ * not corrupt the rotation.
+ */
+async function runScheduledJobs(env, scheduledTime) {
+  const auxiliaryJobs = [
     {
       name: "classifier",
       run: () => runScheduledLocationClassifier(env)
@@ -337,30 +362,56 @@ async function runScheduledJobs(env) {
     }
   ];
 
-  const results = await Promise.allSettled(
-    jobs.map(async (job) => {
-      console.log(`[Cron] Starting ${job.name}`);
+  const scheduledSlot = Number.isFinite(
+    Number(scheduledTime)
+  )
+    ? Math.floor(Number(scheduledTime) / 300000)
+    : Math.floor(Date.now() / 300000);
 
-      try {
-        await job.run();
-        console.log(`[Cron] Completed ${job.name}`);
-      } catch (error) {
-        console.error(
-          `[Cron] Failed ${job.name}:`,
-          error
-        );
-        throw error;
-      }
-    })
+  const phase = (
+    (scheduledSlot % auxiliaryJobs.length) +
+    auxiliaryJobs.length
+  ) % auxiliaryJobs.length;
+
+  console.log(
+    `[Cron] v${VERSION}: starting census`
   );
 
-  for (let i = 0; i < results.length; i++) {
-    if (results[i].status === "rejected") {
-      console.error(
-        `[Cron] ${jobs[i].name} rejected:`,
-        results[i].reason
-      );
-    }
+  /*
+   * Census has priority. If indexing fails,
+   * secondary work is skipped for this cycle.
+   */
+  try {
+    await runScheduledIndexer(env);
+
+    console.log(
+      "[Cron] Census completed"
+    );
+  } catch (error) {
+    console.error(
+      "[Cron] Census failed; secondary job skipped:",
+      error
+    );
+    return;
+  }
+
+  const job = auxiliaryJobs[phase];
+
+  console.log(
+    `[Cron] Starting ${job.name}`
+  );
+
+  try {
+    await job.run();
+
+    console.log(
+      `[Cron] Completed ${job.name}`
+    );
+  } catch (error) {
+    console.error(
+      `[Cron] Failed ${job.name}:`,
+      error
+    );
   }
 }
 
@@ -369,53 +420,71 @@ async function runScheduledJobs(env) {
 // ============================================================
 
 async function runScheduledIndexer(env) {
+  const startedAt = new Date().toISOString();
+
   await setMeta(
     env,
     "last_scheduled_run",
-    new Date().toISOString()
+    startedAt
+  );
+
+  await setMeta(
+    env,
+    "last_scan_started",
+    startedAt
   );
 
   try {
-    const props = await getDynamicGlobalProperties();
-
-    const cursor = await getMetaNumber(
+    const result = await scanHive(
       env,
-      "last_scanned_block",
-      110275441
+      SCHEDULED_SCAN_BLOCKS
     );
 
-    const irreversible = Number(
-      props.last_irreversible_block_num
+    const finishedAt = new Date().toISOString();
+
+    await env.DB.batch([
+      censusMetaStatement(
+        env,
+        "last_successful_scan",
+        finishedAt
+      ),
+      censusMetaStatement(
+        env,
+        "last_scan_completed",
+        finishedAt
+      ),
+      censusMetaStatement(
+        env,
+        "last_scan_blocks",
+        String(result.blocks_scanned)
+      ),
+      censusMetaStatement(
+        env,
+        "last_error",
+        ""
+      ),
+      censusMetaStatement(
+        env,
+        "last_error_at",
+        ""
+      )
+    ]);
+
+    console.log(
+      "[Indexer] Scan completed",
+      JSON.stringify({
+        blocks: result.blocks_scanned,
+        cursor: result.last_scanned_block,
+        behind: result.blocks_behind,
+        census_operations: result.census_operations
+      })
     );
 
-    const lag = Math.max(0, irreversible - cursor);
-    const scanSize = chooseScheduledScanSize(lag);
-
-    await scanHive(env, scanSize);
-
-    await setMeta(
-      env,
-      "last_successful_scan",
-      new Date().toISOString()
-    );
-
-    await clearIndexerError(env);
+    return result;
   } catch (error) {
     await recordIndexerError(env, error);
     throw error;
   }
-}
-
-function chooseScheduledScanSize(lag) {
-  if (lag > 2000) {
-    return AGGRESSIVE_SCAN_BLOCKS;
-  }
-
-  if (lag > 250) {
-    return CATCHUP_SCAN_BLOCKS;
-  }
-
-  return NORMAL_SCAN_BLOCKS;
 }
 
 function determineIndexerState(
@@ -490,7 +559,10 @@ async function scanHive(env, requestedBlocks) {
       endBlock - cursor
     );
 
-    const blocks = await getBlockRange(start, count);
+    const blocks = await getBlockRange(
+      start,
+      count
+    );
 
     if (
       !Array.isArray(blocks) ||
@@ -501,7 +573,11 @@ async function scanHive(env, requestedBlocks) {
       );
     }
 
-    for (let index = 0; index < blocks.length; index++) {
+    for (
+      let index = 0;
+      index < blocks.length;
+      index++
+    ) {
       const block = blocks[index];
       const blockNumber = start + index;
 
@@ -573,7 +649,9 @@ async function scanHive(env, requestedBlocks) {
             );
 
             setsApplied++;
-          } else if (isValidUnsetPayload(payload)) {
+          } else if (
+            isValidUnsetPayload(payload)
+          ) {
             await applyUnset(
               env,
               account,
@@ -713,7 +791,9 @@ function isValidSetPayload(payload) {
     return false;
   }
 
-  for (const field of ["region", "region_name"]) {
+  for (
+    const field of ["region", "region_name"]
+  ) {
     if (
       payload[field] !== undefined &&
       payload[field] !== null &&
@@ -794,12 +874,19 @@ async function applySet(
   ).run();
 }
 
-async function applyUnset(env, account, blockNumber) {
+async function applyUnset(
+  env,
+  account,
+  blockNumber
+) {
   await env.DB.prepare(`
     DELETE FROM census_current
     WHERE account = ?
       AND block_num <= ?
-  `).bind(account, blockNumber).run();
+  `).bind(
+    account,
+    blockNumber
+  ).run();
 }
 
 function getTransactionId(block, index) {
@@ -908,8 +995,12 @@ async function importProfileBatch(env, maxAccounts) {
 
     const accountsByName = new Map(
       accounts
-        .filter(account => account && account.name)
-        .map(account => [account.name, account])
+        .filter(
+          account => account && account.name
+        )
+        .map(
+          account => [account.name, account]
+        )
     );
 
     for (const name of batchNames) {
@@ -989,7 +1080,10 @@ async function importProfileBatch(env, maxAccounts) {
   };
 }
 
-async function lookupHiveAccounts(lowerBound, limit) {
+async function lookupHiveAccounts(
+  lowerBound,
+  limit
+) {
   const result = await hiveRpc(
     "condenser_api.lookup_accounts",
     [lowerBound, limit]
@@ -1091,7 +1185,10 @@ async function saveProfileLocation(
   rawLocation,
   lastAccountUpdate
 ) {
-  const normalized = normalizeLocation(rawLocation);
+  const normalized = normalizeLocation(
+    rawLocation
+  );
+
   const key = makeLocationKey(normalized);
 
   if (!key) {
@@ -1106,10 +1203,11 @@ async function saveProfileLocation(
       source
     )
     VALUES (?, ?, 'pending', 'hive_profile')
-  `).bind(key, rawLocation).run();
+  `).bind(
+    key,
+    rawLocation
+  ).run();
 
-  // Existing matched locations retain their match.
-  // Future account overrides are not overwritten.
   await env.DB.prepare(`
     INSERT INTO profile_locations (
       account,
@@ -1235,7 +1333,10 @@ async function runScheduledLocationClassifier(env) {
   }
 }
 
-async function classifyPendingLocations(env, limit) {
+async function classifyPendingLocations(
+  env,
+  limit
+) {
   const pending = await env.DB.prepare(`
     SELECT id, original_example
     FROM location_matches
@@ -1266,7 +1367,9 @@ async function classifyPendingLocations(env, limit) {
       UPDATE location_matches
       SET
         status = ?,
-        location_type = COALESCE(?, location_type),
+        location_type = COALESCE(
+          ?, location_type
+        ),
         country = ?,
         country_name = ?,
         region = ?,
@@ -1402,7 +1505,10 @@ async function runScheduledGeocoder(env) {
   }
 }
 
-async function geocodeAmbiguousLocations(env, limit) {
+async function geocodeAmbiguousLocations(
+  env,
+  limit
+) {
   const retryBefore = new Date(
     Date.now() -
     GEOCODE_ERROR_RETRY_HOURS * 3600000
@@ -1448,8 +1554,6 @@ async function geocodeAmbiguousLocations(env, limit) {
         result
       );
 
-      // Diagnostic information is written to
-      // Worker logs, without changing the D1 schema.
       console.log(
         "[Geocoder] Result",
         JSON.stringify({
@@ -1465,9 +1569,7 @@ async function geocodeAmbiguousLocations(env, limit) {
         })
       );
 
-      if (
-        safeResult.status === "matched"
-      ) {
+      if (safeResult.status === "matched") {
         await env.DB.prepare(`
           UPDATE location_matches
           SET
@@ -1542,8 +1644,6 @@ async function geocodeAmbiguousLocations(env, limit) {
         error
       );
 
-      // Stop on provider failures to avoid
-      // repeated requests during an outage.
       break;
     }
   }
@@ -1560,21 +1660,10 @@ async function geocodeAmbiguousLocations(env, limit) {
   };
 }
 
-/**
- * Additional conservative validation of GeoNames results.
- *
- * Country-only locations can use a capital-city proxy,
- * provided the geocoder explicitly marked that result
- * as country_capital_proxy.
- *
- * Region proxies can be accepted only when the geocoder
- * explicitly confirms a region_capital_proxy with country,
- * region code, region name, and capital city.
- *
- * Locality matches must start with the recognised
- * city name and have confidence 1.
- */
-function isSafeGeocoderMatch(rawLocation, result) {
+function isSafeGeocoderMatch(
+  rawLocation,
+  result
+) {
   if (result.status !== "matched") {
     return result;
   }
@@ -1610,13 +1699,19 @@ function isSafeGeocoderMatch(rawLocation, result) {
   if (result.location_type === "region_proxy") {
     const verifiedRegionCapital =
       result.reason === "region_capital_proxy" &&
-      typeof result.region === "string" &&
-      result.region.trim().length > 0 &&
       typeof result.region_name === "string" &&
       result.region_name.trim().length > 0 &&
       typeof result.city === "string" &&
       result.city.trim().length > 0;
 
+    /*
+     * Region code may be null for countries
+     * whose GeoNames admin codes have not
+     * been independently verified.
+     *
+     * The country and named region remain
+     * mandatory.
+     */
     return verifiedRegionCapital
       ? result
       : ambiguousResult;
@@ -1863,8 +1958,10 @@ async function getGeocoderStatus(env) {
     last_geocoder_errors: Number(
       meta.last_geocoder_errors || 0
     ),
-    requests_per_scheduled_run: GEOCODE_PER_RUN,
-    error_retry_hours: GEOCODE_ERROR_RETRY_HOURS,
+    requests_per_scheduled_run:
+      GEOCODE_PER_RUN,
+    error_retry_hours:
+      GEOCODE_ERROR_RETRY_HOURS,
     remaining_untried_ambiguous: Number(
       remaining?.count || 0
     ),
@@ -1967,7 +2064,11 @@ async function getMeta(env, key) {
   return row?.value ?? "";
 }
 
-async function getMetaNumber(env, key, fallback) {
+async function getMetaNumber(
+  env,
+  key,
+  fallback
+) {
   const value = await getMeta(env, key);
 
   if (value === "") {
@@ -1981,13 +2082,28 @@ async function getMetaNumber(env, key, fallback) {
     : fallback;
 }
 
-async function setMeta(env, key, value) {
-  await env.DB.prepare(`
+function censusMetaStatement(
+  env,
+  key,
+  value
+) {
+  return env.DB.prepare(`
     INSERT INTO census_meta (key, value)
     VALUES (?, ?)
     ON CONFLICT(key)
     DO UPDATE SET value = excluded.value
-  `).bind(key, String(value)).run();
+  `).bind(
+    key,
+    String(value)
+  );
+}
+
+async function setMeta(env, key, value) {
+  await censusMetaStatement(
+    env,
+    key,
+    value
+  ).run();
 }
 
 async function getProfileMeta(
@@ -2010,11 +2126,22 @@ function metaStatement(env, key, value) {
     VALUES (?, ?)
     ON CONFLICT(key)
     DO UPDATE SET value = excluded.value
-  `).bind(key, String(value));
+  `).bind(
+    key,
+    String(value)
+  );
 }
 
-async function setProfileMeta(env, key, value) {
-  await metaStatement(env, key, value).run();
+async function setProfileMeta(
+  env,
+  key,
+  value
+) {
+  await metaStatement(
+    env,
+    key,
+    value
+  ).run();
 }
 
 async function countCensusAccounts(env) {
@@ -2026,7 +2153,10 @@ async function countCensusAccounts(env) {
   return Number(row?.count || 0);
 }
 
-async function recordIndexerError(env, error) {
+async function recordIndexerError(
+  env,
+  error
+) {
   await setMeta(
     env,
     "last_error",
