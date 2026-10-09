@@ -1,23 +1,25 @@
 
 /**
  * Hive Census — Hive Profile Map
- * GeoNames Geocoder v0.2.6
+ * GeoNames Geocoder v0.2.7
  *
  * Conservative matching of public Hive profile.location.
  *
- * - Country-only values use capital-city proxies.
- * - Recognised state/province-only values use regional
- *   capital-city proxies.
- * - Region capitals may lie outside their region.
- * - Country and exact capital name must match.
- * - Does not infer residence from proxy coordinates.
- * - Avoids guessing between similarly named places.
- * - Does not write to D1.
+ * Rules:
+ * - Country-only locations use national capital proxies.
+ * - State/province-only locations use regional capital proxies.
+ * - A capital may be outside the represented region.
+ * - Ambiguous region names across countries are not guessed.
+ * - Specific cities are never replaced with regional capitals.
+ * - Country and capital names must match GeoNames.
+ * - The module does not write to D1.
  */
 
-const VERSION = "0.2.6";
+const VERSION = "0.2.7";
+
 const GEONAMES_URL =
   "https://secure.geonames.org/searchJSON";
+
 const MAX_RESULTS = 10;
 const REQUEST_TIMEOUT_MS = 12000;
 
@@ -186,11 +188,14 @@ const COUNTRY_DATA = [
 ];
 
 /**
- * Region entries:
  * [country, adminCode1, regionName, capital, aliases]
  *
- * The capital is a representative point.
- * It need not lie inside the region.
+ * adminCode1 identifies the region represented by
+ * the profile, not necessarily the capital's own
+ * administrative location.
+ *
+ * Region codes are preserved for compatibility
+ * with the previous geocoder version.
  */
 const REGION_DATA = [
   // United States
@@ -216,8 +221,7 @@ const REGION_DATA = [
   ["US", "MD", "Maryland", "Annapolis", []],
   ["US", "MA", "Massachusetts", "Boston", []],
   ["US", "MI", "Michigan", "Lansing", []],
-  ["US", "MN", "Minnesota", "Saint Paul",
-    ["st paul"]],
+  ["US", "MN", "Minnesota", "Saint Paul", []],
   ["US", "MS", "Mississippi", "Jackson", []],
   ["US", "MO", "Missouri", "Jefferson City", []],
   ["US", "MT", "Montana", "Helena", []],
@@ -298,9 +302,26 @@ const REGION_DATA = [
   ["IN", "26", "Tripura", "Agartala", []],
   ["IN", "36", "Uttar Pradesh", "Lucknow", []],
   ["IN", "39", "Uttarakhand", "Dehradun", []],
-  ["IN", "28", "West Bengal", "Kolkata", []]
+  ["IN", "28", "West Bengal", "Kolkata", []],
+
+  // Pakistan — four provinces
+  ["PK", null, "Punjab", "Lahore",
+    ["punjab province"]],
+  ["PK", null, "Sindh", "Karachi",
+    ["sind"]],
+  ["PK", null, "Khyber Pakhtunkhwa", "Peshawar",
+    ["kpk", "khyber pakhtoonkhwa",
+      "north west frontier province", "nwfp"]],
+  ["PK", null, "Balochistan", "Quetta",
+    ["baluchistan", "balochistan province"]]
 ];
 
+/**
+ * Administrative hints used for ordinary
+ * city + state queries.
+ *
+ * Region-only matching uses REGION_DATA.
+ */
 const ADMIN_HINTS = [
   ["US", "CA", ["california", "ca"]],
   ["US", "AZ", ["arizona", "az"]],
@@ -358,11 +379,17 @@ export function normalizeGeocoderQuery(value) {
 
 const countryAliases = new Map();
 
-for (const [code, name, capital, aliases] of COUNTRY_DATA) {
+for (
+  const [code, name, capital, aliases]
+  of COUNTRY_DATA
+) {
   const country = { code, name, capital };
 
   for (const alias of [name, ...aliases]) {
-    countryAliases.set(normalizeText(alias), country);
+    countryAliases.set(
+      normalizeText(alias),
+      country
+    );
   }
 }
 
@@ -396,7 +423,10 @@ for (
 
 const adminAliases = new Map();
 
-for (const [country, admin, aliases] of ADMIN_HINTS) {
+for (
+  const [country, admin, aliases]
+  of ADMIN_HINTS
+) {
   for (const alias of aliases) {
     const key = normalizeText(alias);
 
@@ -421,22 +451,22 @@ function isNonGeographicLocation(value) {
   );
 }
 
-function findRegion(value, countryHint = null) {
-  const normalized = normalizeText(value);
+/**
+ * Return all regions matching the supplied name.
+ * Country filtering is applied when available.
+ */
+function findRegions(value, countryHint = null) {
+  const key = normalizeText(value);
 
-  if (!normalized) return null;
+  if (!key) return [];
 
-  const matches = regionAliases.get(normalized) || [];
+  const matches = regionAliases.get(key) || [];
 
-  const filtered = countryHint
+  return countryHint
     ? matches.filter(
         item => item.country === countryHint
       )
     : matches;
-
-  return filtered.length === 1
-    ? filtered[0]
-    : null;
 }
 
 function parseLocation(value) {
@@ -455,7 +485,8 @@ function parseLocation(value) {
       countryOnly: true,
       country: standaloneCountry,
       regionOnly: false,
-      region: null
+      region: null,
+      ambiguousRegion: false
     };
   }
 
@@ -477,12 +508,23 @@ function parseLocation(value) {
 
     if (country) {
       countryHint = country.code;
-      placeQuery = parts.slice(0, -1).join(", ");
+
+      placeQuery = parts
+        .slice(0, -1)
+        .join(", ");
     }
   }
 
+  /*
+   * Also supports:
+   * "Punjab Pakistan"
+   * "Andhra Pradesh India"
+   */
   if (!countryHint) {
-    for (const [alias, country] of sortedCountryAliases) {
+    for (
+      const [alias, country]
+      of sortedCountryAliases
+    ) {
       if (normalized.endsWith(" " + alias)) {
         const words = normalized.split(" ");
         const count = alias.split(" ").length;
@@ -500,24 +542,53 @@ function parseLocation(value) {
     }
   }
 
-  const standaloneRegion = findRegion(
+  /*
+   * Region names must be unique after
+   * applying the country hint.
+   *
+   * "Punjab" -> ambiguous
+   * "Punjab, India" -> Chandigarh
+   * "Punjab, Pakistan" -> Lahore
+   */
+  const matchingRegions = findRegions(
     placeQuery,
     countryHint
   );
 
-  if (standaloneRegion) {
+  if (matchingRegions.length > 1) {
     return {
       query,
-      placeQuery: standaloneRegion.capital,
-      countryHint: standaloneRegion.country,
-      adminHint: standaloneRegion.admin,
+      placeQuery,
+      countryHint,
+      adminHint: null,
       countryOnly: false,
       country: null,
-      regionOnly: true,
-      region: standaloneRegion
+      regionOnly: false,
+      region: null,
+      ambiguousRegion: true
     };
   }
 
+  if (matchingRegions.length === 1) {
+    const region = matchingRegions[0];
+
+    return {
+      query,
+      placeQuery: region.capital,
+      countryHint: region.country,
+      adminHint: region.admin,
+      countryOnly: false,
+      country: null,
+      regionOnly: true,
+      region,
+      ambiguousRegion: false
+    };
+  }
+
+  /*
+   * Ordinary city + state queries retain
+   * their city as the location to geocode.
+   */
   const placeParts = placeQuery
     .split(",")
     .map(x => x.trim())
@@ -554,7 +625,8 @@ function parseLocation(value) {
     countryOnly: false,
     country: null,
     regionOnly: false,
-    region: null
+    region: null,
+    ambiguousRegion: false
   };
 }
 
@@ -580,7 +652,11 @@ function getLocationType(item) {
   return null;
 }
 
-function unresolved(status, reason, count = 0) {
+function unresolved(
+  status,
+  reason,
+  count = 0
+) {
   return {
     status,
     location_type: null,
@@ -671,15 +747,13 @@ function scoreCandidate(item, parsed) {
   }
 
   /*
-   * Regional capitals may lie outside their
-   * region's administrative boundaries.
+   * Regional capital:
    *
-   * Example:
-   * Punjab, India -> Chandigarh
-   * Haryana, India -> Chandigarh
+   * Match country and capital name.
+   * Do not require adminCode1 agreement.
    *
-   * Both results retain their respective
-   * region codes in normalizeCandidate().
+   * Chandigarh can represent both Punjab
+   * and Haryana in India.
    */
   if (parsed.regionOnly) {
     if (item.fcl !== "P") {
@@ -706,8 +780,8 @@ function scoreCandidate(item, parsed) {
   }
 
   /*
-   * Ordinary city + state matching continues
-   * to require administrative-code agreement.
+   * Ordinary city + state matching still
+   * requires administrative agreement.
    */
   if (
     parsed.adminHint &&
@@ -800,6 +874,17 @@ export function evaluateGeocoderResults(
     );
   }
 
+  /*
+   * An ambiguous region name must not
+   * fall back to a city search.
+   */
+  if (parsed.ambiguousRegion) {
+    return unresolved(
+      "ambiguous",
+      "multiple_countries_for_region"
+    );
+  }
+
   if (
     !Array.isArray(candidates) ||
     !candidates.length
@@ -878,6 +963,17 @@ export async function geocodeLocation(
     return unresolved(
       "rejected",
       "non_geographic_location"
+    );
+  }
+
+  /*
+   * Resolve ambiguous regions locally.
+   * No unnecessary GeoNames request.
+   */
+  if (parsed.ambiguousRegion) {
+    return unresolved(
+      "ambiguous",
+      "multiple_countries_for_region"
     );
   }
 
