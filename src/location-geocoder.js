@@ -1,22 +1,21 @@
 
 /**
  * Hive Census — Hive Profile Map
- * GeoNames Geocoder v0.2.5
+ * GeoNames Geocoder v0.2.6
  *
  * Conservative matching of public Hive profile.location.
  *
  * - Country-only values use capital-city proxies.
  * - Recognised state/province-only values use regional
  *   capital-city proxies.
- * - Region proxies require an exact capital match,
- *   country match and administrative code match.
- * - Recognises selected spelling variants.
- * - Does not infer residence from proxies.
+ * - Region capitals may lie outside their region.
+ * - Country and exact capital name must match.
+ * - Does not infer residence from proxy coordinates.
  * - Avoids guessing between similarly named places.
  * - Does not write to D1.
  */
 
-const VERSION = "0.2.5";
+const VERSION = "0.2.6";
 const GEONAMES_URL =
   "https://secure.geonames.org/searchJSON";
 const MAX_RESULTS = 10;
@@ -190,13 +189,8 @@ const COUNTRY_DATA = [
  * Region entries:
  * [country, adminCode1, regionName, capital, aliases]
  *
- * Capitals are representative points only.
- *
- * Administrative codes are GeoNames adminCode1
- * values, not necessarily ISO 3166-2 suffixes.
- *
- * Avoid automatic handling of regions whose
- * capital arrangements are uncertain or disputed.
+ * The capital is a representative point.
+ * It need not lie inside the region.
  */
 const REGION_DATA = [
   // United States
@@ -272,8 +266,7 @@ const REGION_DATA = [
   ["CA", "NU", "Nunavut", "Iqaluit", []],
   ["CA", "YT", "Yukon", "Whitehorse", []],
 
-  // India — selected states
-  // GeoNames numeric adminCode1 identifiers.
+  // India
   ["IN", "02", "Andhra Pradesh", "Amaravati",
     ["andhrapradesh"]],
   ["IN", "03", "Assam", "Dispur", []],
@@ -308,11 +301,6 @@ const REGION_DATA = [
   ["IN", "28", "West Bengal", "Kolkata", []]
 ];
 
-/**
- * Administrative hints for city + state searches.
- * These are deliberately separate from region-only
- * matching.
- */
 const ADMIN_HINTS = [
   ["US", "CA", ["california", "ca"]],
   ["US", "AZ", ["arizona", "az"]],
@@ -512,16 +500,6 @@ function parseLocation(value) {
     }
   }
 
-  /**
-   * Region-only recognition is performed before
-   * treating the final comma-separated component
-   * as a city administrative hint.
-   *
-   * Example:
-   * Andhrapradesh,India
-   * -> Andhra Pradesh
-   * -> Amaravati (region_proxy)
-   */
   const standaloneRegion = findRegion(
     placeQuery,
     countryHint
@@ -692,28 +670,22 @@ function scoreCandidate(item, parsed) {
     return null;
   }
 
-  if (
-    parsed.adminHint &&
-    String(item.adminCode1 || "").toUpperCase() !==
-      String(parsed.adminHint).toUpperCase()
-  ) {
-    return null;
-  }
-
-  if (parsed.countryOnly && item.fcl !== "P") {
-    return null;
-  }
-
+  /*
+   * Regional capitals may lie outside their
+   * region's administrative boundaries.
+   *
+   * Example:
+   * Punjab, India -> Chandigarh
+   * Haryana, India -> Chandigarh
+   *
+   * Both results retain their respective
+   * region codes in normalizeCandidate().
+   */
   if (parsed.regionOnly) {
-    // Regional proxies must point to an actual
-    // populated place, not the geographic centre
-    // of an administrative boundary.
     if (item.fcl !== "P") {
       return null;
     }
 
-    // The result must represent the configured
-    // capital of the recognised region.
     if (
       !exactNameMatch(
         parsed.region.capital,
@@ -731,6 +703,25 @@ function scoreCandidate(item, parsed) {
         Number(item.population) || 0
       )
     };
+  }
+
+  /*
+   * Ordinary city + state matching continues
+   * to require administrative-code agreement.
+   */
+  if (
+    parsed.adminHint &&
+    String(item.adminCode1 || "").toUpperCase() !==
+      String(parsed.adminHint).toUpperCase()
+  ) {
+    return null;
+  }
+
+  if (
+    parsed.countryOnly &&
+    item.fcl !== "P"
+  ) {
+    return null;
   }
 
   if (
@@ -928,7 +919,10 @@ export async function geocodeLocation(
     );
   }
 
-  if (parsed.countryOnly || parsed.regionOnly) {
+  if (
+    parsed.countryOnly ||
+    parsed.regionOnly
+  ) {
     url.searchParams.set(
       "featureClass",
       "P"
