@@ -1,7 +1,7 @@
 
 /**
  * Hive Census — Hive Profile Map
- * GeoNames Geocoder v0.2.3
+ * GeoNames Geocoder v0.2.4
  *
  * Conservative matching of public Hive profile.location.
  *
@@ -12,7 +12,7 @@
  * - Does not write to D1.
  */
 
-const VERSION = "0.2.3";
+const VERSION = "0.2.4";
 const GEONAMES_URL = "https://secure.geonames.org/searchJSON";
 const MAX_RESULTS = 10;
 const REQUEST_TIMEOUT_MS = 12000;
@@ -74,7 +74,102 @@ const COUNTRY_DATA = [
   ["CL", "Chile", "Santiago", []],
   ["NZ", "New Zealand", "Wellington", []],
   ["SR", "Suriname", "Paramaribo", []],
-  ["NP", "Nepal", "Kathmandu", []]
+  ["NP", "Nepal", "Kathmandu", []],
+
+  // Additional European countries
+  ["CY", "Cyprus", "Nicosia", ["kypros", "kibris"]],
+  ["EE", "Estonia", "Tallinn", ["eesti"]],
+  ["LV", "Latvia", "Riga", []],
+  ["LT", "Lithuania", "Vilnius", []],
+  ["SI", "Slovenia", "Ljubljana", []],
+  ["HR", "Croatia", "Zagreb", []],
+  ["RS", "Serbia", "Belgrade", []],
+  ["BA", "Bosnia and Herzegovina", "Sarajevo",
+    ["bosnia"]],
+  ["ME", "Montenegro", "Podgorica", []],
+  ["MK", "North Macedonia", "Skopje",
+    ["macedonia"]],
+  ["AL", "Albania", "Tirana", []],
+  ["BG", "Bulgaria", "Sofia", []],
+  ["MD", "Moldova", "Chisinau", []],
+  ["BY", "Belarus", "Minsk", []],
+  ["LU", "Luxembourg", "Luxembourg", []],
+  ["MT", "Malta", "Valletta", []],
+  ["IS", "Iceland", "Reykjavik", []],
+  ["GE", "Georgia", "Tbilisi", []],
+  ["AM", "Armenia", "Yerevan", []],
+  ["AZ", "Azerbaijan", "Baku", []],
+
+  // Additional countries in Asia
+  ["CN", "China", "Beijing", []],
+  ["TW", "Taiwan", "Taipei", []],
+  ["LK", "Sri Lanka", "Sri Jayawardenepura Kotte", []],
+  ["MM", "Myanmar", "Naypyidaw", ["burma"]],
+  ["KH", "Cambodia", "Phnom Penh", []],
+  ["LA", "Laos", "Vientiane", []],
+  ["MN", "Mongolia", "Ulaanbaatar", []],
+  ["KZ", "Kazakhstan", "Astana", []],
+  ["UZ", "Uzbekistan", "Tashkent", []],
+  ["KG", "Kyrgyzstan", "Bishkek", []],
+  ["TJ", "Tajikistan", "Dushanbe", []],
+  ["TM", "Turkmenistan", "Ashgabat", []],
+  ["AF", "Afghanistan", "Kabul", []],
+  ["IR", "Iran", "Tehran", []],
+  ["IQ", "Iraq", "Baghdad", []],
+  ["SA", "Saudi Arabia", "Riyadh", []],
+  ["AE", "United Arab Emirates", "Abu Dhabi", ["uae"]],
+  ["QA", "Qatar", "Doha", []],
+  ["KW", "Kuwait", "Kuwait City", []],
+  ["OM", "Oman", "Muscat", []],
+  ["BH", "Bahrain", "Manama", []],
+  ["JO", "Jordan", "Amman", []],
+  ["LB", "Lebanon", "Beirut", []],
+  ["IL", "Israel", "Jerusalem", []],
+
+  // Additional African countries
+  ["MA", "Morocco", "Rabat", []],
+  ["DZ", "Algeria", "Algiers", []],
+  ["TN", "Tunisia", "Tunis", []],
+  ["LY", "Libya", "Tripoli", []],
+  ["SD", "Sudan", "Khartoum", []],
+  ["ET", "Ethiopia", "Addis Ababa", []],
+  ["UG", "Uganda", "Kampala", []],
+  ["TZ", "Tanzania", "Dodoma", []],
+  ["RW", "Rwanda", "Kigali", []],
+  ["SN", "Senegal", "Dakar", []],
+  ["CI", "Ivory Coast", "Yamoussoukro",
+    ["cote d ivoire", "côte d'ivoire"]],
+  ["CM", "Cameroon", "Yaounde", []],
+  ["ZM", "Zambia", "Lusaka", []],
+  ["ZW", "Zimbabwe", "Harare", []],
+  ["BW", "Botswana", "Gaborone", []],
+  ["NA", "Namibia", "Windhoek", []],
+  ["MG", "Madagascar", "Antananarivo", []],
+
+  // Additional American and Caribbean countries
+  ["UY", "Uruguay", "Montevideo", []],
+  ["PY", "Paraguay", "Asuncion", []],
+  ["BO", "Bolivia", "Sucre", []],
+  ["EC", "Ecuador", "Quito", []],
+  ["GY", "Guyana", "Georgetown", []],
+  ["CR", "Costa Rica", "San Jose", []],
+  ["PA", "Panama", "Panama City", []],
+  ["GT", "Guatemala", "Guatemala City", []],
+  ["HN", "Honduras", "Tegucigalpa", []],
+  ["SV", "El Salvador", "San Salvador", []],
+  ["NI", "Nicaragua", "Managua", []],
+  ["CU", "Cuba", "Havana", []],
+  ["DO", "Dominican Republic", "Santo Domingo", []],
+  ["HT", "Haiti", "Port-au-Prince", []],
+  ["JM", "Jamaica", "Kingston", []],
+  ["TT", "Trinidad and Tobago", "Port of Spain", []],
+
+  // Oceania
+  ["FJ", "Fiji", "Suva", []],
+  ["PG", "Papua New Guinea", "Port Moresby", []],
+  ["WS", "Samoa", "Apia", []],
+  ["TO", "Tonga", "Nuku'alofa", []],
+  ["VU", "Vanuatu", "Port Vila", []]
 ];
 
 const ADMIN_HINTS = [
@@ -133,11 +228,9 @@ export function normalizeGeocoderQuery(value) {
 }
 
 const countryAliases = new Map();
-const countriesByCode = new Map();
 
 for (const [code, name, capital, aliases] of COUNTRY_DATA) {
   const country = { code, name, capital };
-  countriesByCode.set(code, country);
 
   for (const alias of [name, ...aliases]) {
     countryAliases.set(normalizeText(alias), country);
@@ -248,7 +341,6 @@ function parseLocation(value) {
 
 function cleanPlaceName(value) {
   return String(value || "")
-    .replace(/\bcity\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
