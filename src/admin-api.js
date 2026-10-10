@@ -8,8 +8,12 @@
  * - Hive blockchain authority verification
  * - HttpOnly session cookies
  *
- * This module does not expose administrative
- * write operations. Those will be added later.
+ * Location Review:
+ * - Authenticated ambiguous-location queue
+ * - Read-only in this version
+ *
+ * Administrative write operations will be
+ * implemented after validating the review queue.
  */
 
 import {
@@ -30,6 +34,9 @@ const HIVE_RPC = "https://api.hive.blog";
 
 const MAX_BODY_BYTES = 8192;
 const MAX_SIGNATURE_LENGTH = 256;
+
+const DEFAULT_REVIEW_LIMIT = 50;
+const MAX_REVIEW_LIMIT = 100;
 
 const SECURITY_HEADERS = {
   "Content-Type": "application/json; charset=utf-8",
@@ -451,6 +458,109 @@ async function logout(request, env) {
   );
 }
 
+// ============================================================
+// LOCATION REVIEW — READ-ONLY
+// ============================================================
+
+async function listAmbiguousLocations(
+  request,
+  env
+) {
+  const url = new URL(request.url);
+
+  const requestedLimit = Number(
+    url.searchParams.get("limit") ||
+    DEFAULT_REVIEW_LIMIT
+  );
+
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.min(
+        MAX_REVIEW_LIMIT,
+        Math.max(1, Math.floor(requestedLimit))
+      )
+    : DEFAULT_REVIEW_LIMIT;
+
+  const requestedOffset = Number(
+    url.searchParams.get("offset") || 0
+  );
+
+  const offset = Number.isSafeInteger(
+    requestedOffset
+  ) && requestedOffset >= 0
+    ? requestedOffset
+    : 0;
+
+  /*
+   * One row represents one distinct
+   * normalized location string.
+   *
+   * The account count helps prioritize
+   * manual review.
+   *
+   * Account-specific overrides are excluded
+   * from the count because they must not be
+   * overwritten by a global decision.
+   */
+  const result = await env.DB.prepare(`
+    SELECT
+      m.id,
+      m.location_key,
+      m.original_example,
+      m.status,
+      m.location_type,
+      m.country,
+      m.country_name,
+      m.region,
+      m.region_name,
+      m.city,
+      m.lat,
+      m.lon,
+      m.confidence,
+      m.source,
+      m.updated_at,
+      COUNT(p.account) AS affected_accounts
+    FROM location_matches m
+    LEFT JOIN profile_locations p
+      ON p.match_id = m.id
+      AND NOT EXISTS (
+        SELECT 1
+        FROM profile_location_overrides o
+        WHERE o.account = p.account
+      )
+    WHERE m.status = 'ambiguous'
+    GROUP BY m.id
+    ORDER BY
+      affected_accounts DESC,
+      m.id ASC
+    LIMIT ? OFFSET ?
+  `).bind(
+    limit,
+    offset
+  ).all();
+
+  const countRow = await env.DB.prepare(`
+    SELECT COUNT(*) AS total
+    FROM location_matches
+    WHERE status = 'ambiguous'
+  `).first();
+
+  const total = Number(
+    countRow?.total || 0
+  );
+
+  return respond({
+    ok: true,
+    version: "0.1.0",
+    account: ADMIN_ACCOUNT,
+    total,
+    limit,
+    offset,
+    count: result.results.length,
+    has_more: offset + result.results.length < total,
+    locations: result.results
+  });
+}
+
 /*
  * Called from the main Worker before
  * the regular public API routes.
@@ -485,7 +595,8 @@ export async function handleAdminApi(
     "/api/admin/challenge": "POST",
     "/api/admin/login": "POST",
     "/api/admin/session": "GET",
-    "/api/admin/logout": "POST"
+    "/api/admin/logout": "POST",
+    "/api/admin/locations/ambiguous": "GET"
   };
 
   const expectedMethod = routes[path];
@@ -538,6 +649,22 @@ export async function handleAdminApi(
           request,
           env
         );
+
+      case "/api/admin/locations/ambiguous": {
+        const auth = await requireAdminSession(
+          request,
+          env
+        );
+
+        if (!auth.authorized) {
+          return auth.response;
+        }
+
+        return await listAmbiguousLocations(
+          request,
+          env
+        );
+      }
 
       default:
         return failure(
