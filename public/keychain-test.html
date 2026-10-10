@@ -3,18 +3,15 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1"
-  >
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
 
-  <title>Hive Keychain — Sign Buffer Test</title>
+  <title>Hive Keychain — Signature Diagnostics</title>
 
   <style>
     :root {
       color-scheme: dark;
-      font-family: system-ui, sans-serif;
+      font-family: system-ui, -apple-system, sans-serif;
     }
 
     * {
@@ -37,6 +34,10 @@
       font-size: 1.6rem;
     }
 
+    h2 {
+      font-size: 1.2rem;
+    }
+
     p {
       line-height: 1.6;
       color: #b8c5d6;
@@ -56,7 +57,7 @@
       font-weight: 600;
     }
 
-    input, select {
+    input, select, textarea {
       width: 100%;
       margin-bottom: 16px;
       padding: 12px;
@@ -65,6 +66,11 @@
       background: #101827;
       color: white;
       font: inherit;
+    }
+
+    textarea {
+      min-height: 120px;
+      resize: vertical;
     }
 
     button {
@@ -77,10 +83,12 @@
       color: white;
       font: inherit;
       font-weight: 600;
+      cursor: pointer;
     }
 
     button:disabled {
       opacity: .5;
+      cursor: wait;
     }
 
     button.secondary {
@@ -113,11 +121,12 @@
 
 <body>
   <main>
-    <h1>Hive Keychain — Sign Buffer Test</h1>
+    <h1>Hive Keychain — Signature Diagnostics</h1>
 
     <p>
-      Independent diagnostic tool for Hive Keychain
-      Mobile and browser extensions.
+      Diagnostic tool for comparing a standard
+      Keychain signature with a real Hive Census
+      administrator authentication challenge.
     </p>
 
     <section class="panel">
@@ -126,7 +135,7 @@
     </section>
 
     <section class="panel">
-      <h2>Signature test</h2>
+      <h2>Test configuration</h2>
 
       <label for="account">
         Hive account
@@ -145,36 +154,30 @@
       </label>
 
       <select id="keyType">
-        <option value="Posting">
-          Posting
-        </option>
-        <option value="Active">
-          Active
-        </option>
-        <option value="Memo">
-          Memo
-        </option>
+        <option value="Posting">Posting</option>
+        <option value="Active">Active</option>
+        <option value="Memo">Memo</option>
       </select>
 
       <label for="message">
-        Message
+        Test message
       </label>
 
-      <input
-        id="message"
-        type="text"
-        value="Hive Census Keychain diagnostic test"
-      >
+      <textarea id="message">Hive Census Keychain diagnostic test</textarea>
 
-      <button id="signButton">
-        Test Sign Buffer
+      <button id="standardButton">
+        Test 1 — Sign standard message
+      </button>
+
+      <button id="challengeButton">
+        Test 2 — Sign real admin challenge
       </button>
 
       <button
         id="resetButton"
         class="secondary"
       >
-        Reset test
+        Reset diagnostics
       </button>
     </section>
 
@@ -200,6 +203,8 @@
   <script>
     "use strict";
 
+    const ADMIN_ACCOUNT = "jocieprosza";
+
     const accountInput =
       document.getElementById("account");
 
@@ -209,8 +214,11 @@
     const messageInput =
       document.getElementById("message");
 
-    const signButton =
-      document.getElementById("signButton");
+    const standardButton =
+      document.getElementById("standardButton");
+
+    const challengeButton =
+      document.getElementById("challengeButton");
 
     const resetButton =
       document.getElementById("resetButton");
@@ -233,6 +241,7 @@
     let startedAt = null;
     let activeTest = false;
     let events = [];
+    let testSequence = 0;
 
     function timestamp() {
       return new Date().toISOString();
@@ -245,7 +254,7 @@
 
       return (
         (performance.now() - startedAt) / 1000
-      ).toFixed(1);
+      ).toFixed(2);
     }
 
     function addLog(text) {
@@ -265,11 +274,21 @@
       status.className = type;
     }
 
+    function setBusy(value) {
+      activeTest = value;
+
+      standardButton.disabled = value;
+      challengeButton.disabled = value;
+      accountInput.disabled = value;
+      keyTypeInput.disabled = value;
+      messageInput.disabled = value;
+    }
+
     function inspectEnvironment() {
       const keychain = window.hive_keychain;
 
       const data = {
-        url: location.origin,
+        origin: location.origin,
         userAgent: navigator.userAgent,
         keychainDetected: Boolean(keychain),
         requestSignBufferAvailable:
@@ -291,13 +310,11 @@
         !response ||
         typeof response !== "object"
       ) {
-        return response;
+        return {
+          responseType: typeof response
+        };
       }
 
-      /*
-       * Show the response structure without
-       * publishing the complete signature.
-       */
       const sanitized = {
         success: response.success,
         error: response.error,
@@ -311,72 +328,36 @@
       ) {
         sanitized.signatureLength =
           response.result.length;
-
-        sanitized.signaturePrefix =
-          response.result.slice(0, 4);
       }
 
       return sanitized;
     }
 
-    function finishTest() {
-      activeTest = false;
-      signButton.disabled = false;
-      accountInput.disabled = false;
-      keyTypeInput.disabled = false;
-      messageInput.disabled = false;
-    }
-
-    function runTest() {
+    function beginTest(name) {
       if (activeTest) {
-        return;
+        return false;
       }
 
-      const account =
-        accountInput.value.trim().replace(/^@/, "");
-
-      const keyType = keyTypeInput.value;
-
-      const messageText =
-        messageInput.value;
-
-      if (!/^[a-z][a-z0-9.-]{2,15}$/.test(account)) {
-        setStatus(
-          "Invalid Hive account name.",
-          "error"
-        );
-        return;
-      }
-
-      if (!messageText.trim()) {
-        setStatus(
-          "Message cannot be empty.",
-          "error"
-        );
-        return;
-      }
-
-      events = [];
+      testSequence++;
       startedAt = performance.now();
-      activeTest = true;
-
-      signButton.disabled = true;
-      accountInput.disabled = true;
-      keyTypeInput.disabled = true;
-      messageInput.disabled = true;
-
-      result.textContent =
-        "Waiting for Keychain response...";
+      events = [];
 
       log.textContent = "";
+      result.textContent =
+        "Waiting for test result...";
 
-      addLog("Test started");
-      addLog(`Account: @${account}`);
-      addLog(`Key type: ${keyType}`);
-      addLog(
-        `Message length: ${messageText.length}`
-      );
+      setBusy(true);
 
+      addLog(`Test started: ${name}`);
+
+      return true;
+    }
+
+    function finishTest() {
+      setBusy(false);
+    }
+
+    function getKeychain() {
       const keychain = window.hive_keychain;
 
       if (
@@ -384,90 +365,301 @@
         typeof keychain.requestSignBuffer !==
           "function"
       ) {
+        throw new Error(
+          "Hive Keychain signing API unavailable."
+        );
+      }
+
+      return keychain;
+    }
+
+    function validateAccount(account) {
+      if (
+        !/^[a-z][a-z0-9.-]{2,15}$/.test(account)
+      ) {
+        throw new Error(
+          "Invalid Hive account name."
+        );
+      }
+    }
+
+    function signMessage(
+      account,
+      messageText,
+      keyType,
+      sequence
+    ) {
+      return new Promise((resolve, reject) => {
+        const keychain = getKeychain();
+
+        let settled = false;
+
+        const signatureStarted =
+          performance.now();
+
+        function finish(error, response) {
+          if (settled) {
+            return;
+          }
+
+          settled = true;
+
+          if (error) {
+            reject(error);
+          } else {
+            resolve(response);
+          }
+        }
+
         addLog(
-          "ERROR: requestSignBuffer unavailable"
+          `Calling requestSignBuffer for @${account}`
+        );
+
+        addLog(`Key type: ${keyType}`);
+        addLog(
+          `Message length: ${messageText.length}`
         );
 
         setStatus(
-          "Hive Keychain API unavailable.",
-          "error"
+          "Waiting for Keychain confirmation..."
         );
 
-        finishTest();
+        try {
+          keychain.requestSignBuffer(
+            account,
+            messageText,
+            keyType,
+            response => {
+              if (sequence !== testSequence) {
+                return;
+              }
+
+              const seconds = (
+                (
+                  performance.now() -
+                  signatureStarted
+                ) / 1000
+              ).toFixed(2);
+
+              addLog(
+                `Keychain callback after ${seconds}s`
+              );
+
+              const sanitized =
+                sanitizeResponse(response);
+
+              result.textContent =
+                JSON.stringify(
+                  sanitized,
+                  null,
+                  2
+                );
+
+              addLog(
+                "Keychain success: " +
+                Boolean(response?.success)
+              );
+
+              if (response?.success === true) {
+                finish(null, response);
+              } else {
+                finish(
+                  new Error(
+                    response?.message ||
+                    response?.error ||
+                    "Keychain rejected the request."
+                  )
+                );
+              }
+            }
+          );
+
+          addLog(
+            "Request submitted; awaiting callback"
+          );
+        } catch (error) {
+          finish(error);
+        }
+      });
+    }
+
+    async function runStandardTest() {
+      if (!beginTest("Standard message")) {
         return;
       }
 
-      addLog("Calling requestSignBuffer");
-
-      setStatus(
-        "Waiting for Keychain confirmation..."
-      );
+      const sequence = testSequence;
 
       try {
-        keychain.requestSignBuffer(
+        const account =
+          accountInput.value.trim()
+            .replace(/^@/, "");
+
+        const keyType = keyTypeInput.value;
+        const messageText = messageInput.value;
+
+        validateAccount(account);
+
+        if (!messageText.trim()) {
+          throw new Error(
+            "Message cannot be empty."
+          );
+        }
+
+        const response = await signMessage(
           account,
           messageText,
           keyType,
-          response => {
-            addLog(
-              "Keychain callback received"
-            );
+          sequence
+        );
 
-            const sanitized =
-              sanitizeResponse(response);
+        if (response.success === true) {
+          addLog("SUCCESS: standard signature");
 
-            result.textContent =
-              JSON.stringify(
-                sanitized,
-                null,
-                2
-              );
+          setStatus(
+            `Standard message signed in ${elapsed()}s.`,
+            "success"
+          );
+        }
+      } catch (error) {
+        addLog(
+          "FAILURE: " + error.message
+        );
 
-            if (response?.success === true) {
-              addLog(
-                "SUCCESS: signature returned"
-              );
+        setStatus(
+          `Standard test failed: ${error.message}`,
+          "error"
+        );
+      } finally {
+        finishTest();
+      }
+    }
 
-              setStatus(
-                "Signature returned successfully " +
-                `after ${elapsed()} seconds.`,
-                "success"
-              );
-            } else {
-              addLog(
-                "FAILURE: " +
-                (
-                  response?.message ||
-                  response?.error ||
-                  "Unknown Keychain error"
-                )
-              );
+    async function runChallengeTest() {
+      if (!beginTest("Real admin challenge")) {
+        return;
+      }
 
-              setStatus(
-                "Keychain returned an error " +
-                `after ${elapsed()} seconds.`,
-                "error"
-              );
-            }
+      const sequence = testSequence;
 
-            finishTest();
+      try {
+        const account =
+          accountInput.value.trim()
+            .replace(/^@/, "");
+
+        const keyType = keyTypeInput.value;
+
+        validateAccount(account);
+
+        if (account !== ADMIN_ACCOUNT) {
+          throw new Error(
+            "Admin challenge requires @jocieprosza."
+          );
+        }
+
+        if (keyType !== "Posting") {
+          throw new Error(
+            "Admin challenge requires Posting key."
+          );
+        }
+
+        addLog(
+          "Fetching /api/admin/challenge"
+        );
+
+        setStatus(
+          "Requesting real administrator challenge..."
+        );
+
+        const response = await fetch(
+          "/api/admin/challenge",
+          {
+            method: "POST",
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: "{}"
           }
         );
 
         addLog(
-          "requestSignBuffer invoked; " +
-          "waiting for callback"
+          `Challenge API HTTP ${response.status}`
         );
+
+        const challenge = await response.json();
+
+        if (
+          !response.ok ||
+          challenge.ok !== true
+        ) {
+          throw new Error(
+            challenge.error ||
+            `Challenge API HTTP ${response.status}`
+          );
+        }
+
+        if (
+          challenge.account !== ADMIN_ACCOUNT ||
+          typeof challenge.nonce !== "string" ||
+          typeof challenge.message !== "string"
+        ) {
+          throw new Error(
+            "Invalid challenge structure."
+          );
+        }
+
+        addLog(
+          "Challenge received and validated"
+        );
+
+        addLog(
+          `Challenge message length: ${challenge.message.length}`
+        );
+
+        /*
+         * Sign exactly the server-provided
+         * message, without changing its
+         * whitespace, encoding or content.
+         *
+         * The challenge and signature are
+         * deliberately not included in logs.
+         */
+
+        const signatureResponse =
+          await signMessage(
+            ADMIN_ACCOUNT,
+            challenge.message,
+            "Posting",
+            sequence
+          );
+
+        if (signatureResponse.success === true) {
+          addLog(
+            "SUCCESS: real admin challenge signed"
+          );
+
+          addLog(
+            "Signature not sent to login API"
+          );
+
+          setStatus(
+            "Real administrator challenge signed " +
+            `successfully in ${elapsed()}s.`,
+            "success"
+          );
+        }
       } catch (error) {
         addLog(
-          "EXCEPTION: " + error.message
+          "FAILURE: " + error.message
         );
 
         setStatus(
-          error.message,
+          `Challenge test failed: ${error.message}`,
           "error"
         );
-
+      } finally {
         finishTest();
       }
     }
@@ -475,13 +667,14 @@
     function resetTest() {
       if (activeTest) {
         addLog(
-          "UI reset while a request may still be pending"
+          "Reset requested while a Keychain " +
+          "request may still be pending"
         );
       }
 
+      testSequence++;
       events = [];
       startedAt = null;
-      activeTest = false;
 
       log.textContent =
         "Waiting for test.";
@@ -490,7 +683,6 @@
         "No response yet.";
 
       setStatus("Ready.");
-
       finishTest();
 
       inspectEnvironment();
@@ -498,7 +690,7 @@
 
     async function copyLog() {
       const diagnostic = [
-        "Hive Keychain Sign Buffer Diagnostic",
+        "Hive Keychain Signature Diagnostic",
         "",
         "Environment:",
         environment.textContent,
@@ -528,9 +720,14 @@
       }
     }
 
-    signButton.addEventListener(
+    standardButton.addEventListener(
       "click",
-      runTest
+      runStandardTest
+    );
+
+    challengeButton.addEventListener(
+      "click",
+      runChallengeTest
     );
 
     resetButton.addEventListener(
