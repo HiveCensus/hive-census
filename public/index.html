@@ -5,678 +5,248 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#0b0d10">
   <meta name="description" content="Hive Census — an open, on-chain map of the Hive community.">
-
   <title>Hive Census — Where in the world is Hive?</title>
-
   <link rel="icon" href="/assets/hive-logo.png">
   <link rel="preconnect" href="https://unpkg.com">
-
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-  >
-
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="/styles.css">
+  <style>
+    .wallet-menu { position: relative; }
+    .wallet-options { position: absolute; right: 0; top: calc(100% + 8px); z-index: 1100; min-width: 220px; padding: 8px; background: #171b21; border: 1px solid #414854; border-radius: 12px; box-shadow: 0 14px 36px #0009; }
+    .wallet-options[hidden], .wallet-modal[hidden] { display: none !important; }
+    .wallet-option { display: block; width: 100%; border: 0; border-radius: 8px; background: transparent; color: #f3f5f7; text-align: left; padding: 12px; cursor: pointer; font: inherit; }
+    .wallet-option:hover, .wallet-option:focus-visible { background: #303741; }
+    .wallet-option:disabled { opacity: .55; cursor: not-allowed; }
+    .wallet-methods { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    .wallet-methods .btn { flex: 1 1 150px; }
+    .wallet-method-note { font-size: .85rem; margin-top: 8px; }
+    .wallet-modal { position: fixed; inset: 0; z-index: 2500; display: flex; justify-content: center; align-items: center; padding: 20px; background: #000b; }
+    .wallet-modal-panel { width: min(100%, 440px); max-height: 90vh; overflow-y: auto; padding: 24px; border: 1px solid #414854; border-radius: 16px; background: #171b21; color: #f3f5f7; box-shadow: 0 18px 60px #000a; }
+    .wallet-modal-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+    .wallet-modal-head h3 { margin: 0; }
+    .wallet-modal-close { color: inherit; background: transparent; border: 0; font-size: 1.8rem; cursor: pointer; }
+    #hiveAuthQr { display: flex; justify-content: center; margin: 18px auto; min-height: 180px; align-items: center; }
+    #hiveAuthQr img, #hiveAuthQr canvas { max-width: 100%; }
+    .wallet-modal-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .wallet-modal-actions .btn { flex: 1; }
+    @media (max-width: 560px) { .wallet-options { right: 0; min-width: 190px; } .wallet-modal-panel { padding: 18px; } }
+  </style>
 </head>
-
 <body>
-
 <header class="topbar">
-
-  <a
-    class="brand"
-    href="/#top"
-    aria-label="Hive Census home"
-  >
-    <img
-      src="/assets/hive-logo.png"
-      alt=""
-    >
-
-    <span>
-      <strong>HIVE</strong> CENSUS
-    </span>
+  <a class="brand" href="/#top" aria-label="Hive Census home">
+    <img src="/assets/hive-logo.png" alt="">
+    <span><strong>HIVE</strong> CENSUS</span>
   </a>
-
   <nav aria-label="Main navigation">
     <a href="/#map" aria-current="page">Census Map</a>
     <a href="/profiles/">Profile Map</a>
     <a href="/#join">Join Census</a>
     <a href="/#about">About</a>
   </nav>
-
-  <!-- HEADER ACTIONS -->
-
   <div class="header-actions">
-
-    <a
-      href="/profiles/"
-      class="btn btn-dark mobile-profile-link"
-      aria-label="Open Profile Map"
-    >
-      Profile Map
-    </a>
-
-    <button
-      id="connectBtn"
-      type="button"
-      class="btn btn-red"
-    >
-      Connect Keychain
-    </button>
-
+    <a href="/profiles/" class="btn btn-dark mobile-profile-link" aria-label="Open Profile Map">Profile Map</a>
+    <div class="wallet-menu" id="walletMenu">
+      <button id="connectBtn" type="button" class="btn btn-red" aria-expanded="false" aria-controls="walletOptions" aria-haspopup="true">Connect Wallet ▾</button>
+      <div id="walletOptions" class="wallet-options" role="group" aria-label="Choose wallet" hidden>
+        <button id="walletKeychainBtn" type="button" class="wallet-option">Hive Keychain</button>
+        <button id="walletHiveAuthBtn" type="button" class="wallet-option" disabled title="HiveAuth integration is being activated">HiveAuth · Coming soon</button>
+      </div>
+    </div>
   </div>
-
 </header>
-
-
 <main id="top">
-
-  <!-- HERO -->
-
   <section class="hero">
-
     <div class="hero-copy">
-
-      <div class="kicker">
-        <span></span>
-        OPEN · ON-CHAIN · COMMUNITY-BUILT
-      </div>
-
-      <h1>
-        Where in the world<br>
-        is <b>Hive?</b>
-      </h1>
-
-      <p>
-        Hive Census is a public map built from location
-        declarations signed by Hive accounts and stored
-        on the Hive blockchain.
-      </p>
-
+      <div class="kicker"><span></span>OPEN · ON-CHAIN · COMMUNITY-BUILT</div>
+      <h1>Where in the world<br>is <b>Hive?</b></h1>
+      <p>Hive Census is a public map built from location declarations signed by Hive accounts and stored on the Hive blockchain.</p>
       <div class="hero-actions">
-
-        <a
-          class="btn btn-red"
-          href="#join"
-        >
-          Add my location
-        </a>
-
-        <a
-          class="btn btn-ghost"
-          href="#map"
-        >
-          Explore the map
-        </a>
-
+        <a class="btn btn-red" href="#join">Add my location</a>
+        <a class="btn btn-ghost" href="#map">Explore the map</a>
       </div>
-
       <div class="trust">
         <span>✓ No GPS required</span>
         <span>✓ No separate account</span>
         <span>✓ Posting authority only</span>
       </div>
-
     </div>
-
-
-    <div
-      class="hero-visual"
-      aria-hidden="true"
-    >
-
+    <div class="hero-visual" aria-hidden="true">
       <div class="orbit orbit-a"></div>
       <div class="orbit orbit-b"></div>
-
-      <img
-        src="/assets/hive-logo-transparent.png"
-        alt=""
-      >
-
-      <div class="hero-word">
-        CENSUS
-      </div>
-
+      <img src="/assets/hive-logo-transparent.png" alt="">
+      <div class="hero-word">CENSUS</div>
     </div>
-
   </section>
-
-
-  <!-- ON-CHAIN CENSUS MAP -->
-
-  <section
-    id="map"
-    class="section"
-  >
-
+  <section id="map" class="section">
     <div class="section-title">
-
       <div>
-
-        <div class="kicker">
-          <span></span>
-          ON-CHAIN CENSUS
-        </div>
-
-        <h2>
-          Explore the Hive community
-        </h2>
-
-        <p class="muted">
-          Locations voluntarily declared by Hive users
-          and recorded on the Hive blockchain.
-        </p>
-
+        <div class="kicker"><span></span>ON-CHAIN CENSUS</div>
+        <h2>Explore the Hive community</h2>
+        <p class="muted">Locations voluntarily declared by Hive users and recorded on the Hive blockchain.</p>
       </div>
-
       <div class="map-status-row">
-
-        <div class="badge">
-          LIVE · ON-CHAIN CENSUS
+        <div class="badge">LIVE · ON-CHAIN CENSUS</div>
+        <div id="indexerStatus" class="indexer-status indexer-status-loading" title="Checking Hive blockchain synchronization…">
+          <span class="indexer-dot"></span><span id="indexerStatusText">Checking sync…</span>
         </div>
-
-        <div
-          id="indexerStatus"
-          class="indexer-status indexer-status-loading"
-          title="Checking Hive blockchain synchronization…"
-        >
-          <span class="indexer-dot"></span>
-
-          <span id="indexerStatusText">
-            Checking sync…
-          </span>
-        </div>
-
       </div>
-
     </div>
-
-
     <div class="map-shell">
-
       <div id="mapCanvas"></div>
-
       <div class="map-overlay">
-
-        <strong>
-          Hive around the world
-        </strong>
-
-        <span id="censusStats">
-          Loading Census…
-        </span>
-
-        <span>
-          Community locations declared by Hive users.
-        </span>
-
+        <strong>Hive around the world</strong>
+        <span id="censusStats">Loading Census…</span>
+        <span>Community locations declared by Hive users.</span>
       </div>
-
     </div>
-
-    <!-- SEPARATE PROFILE MAP DISCOVERY -->
-
-    <div
-      class="card"
-      style="margin-top:24px"
-    >
-
-      <div class="kicker">
-        <span></span>
-        ANOTHER WAY TO EXPLORE HIVE
-      </div>
-
-      <h3>
-        Discover locations from public Hive profiles
-      </h3>
-
-      <p class="muted">
-        Not everyone has joined Hive Census yet.
-        Our separate Profile Map explores locations
-        automatically extracted from public Hive profiles.
-        These locations may be approximate, incomplete
-        or ambiguous, and they are not voluntary
-        Census declarations.
-      </p>
-
-      <a
-        class="btn btn-dark"
-        href="/profiles/"
-      >
-        Explore Profile Map →
-      </a>
-
+    <div class="card" style="margin-top:24px">
+      <div class="kicker"><span></span>ANOTHER WAY TO EXPLORE HIVE</div>
+      <h3>Discover locations from public Hive profiles</h3>
+      <p class="muted">Not everyone has joined Hive Census yet. Our separate Profile Map explores locations automatically extracted from public Hive profiles. These locations may be approximate, incomplete or ambiguous, and they are not voluntary Census declarations.</p>
+      <a class="btn btn-dark" href="/profiles/">Explore Profile Map →</a>
     </div>
-
   </section>
-
-
-  <!-- JOIN CENSUS -->
-
-  <section
-    id="join"
-    class="section"
-  >
-
+  <section id="join" class="section">
     <div class="section-title">
-
-      <div>
-
-        <div class="kicker">
-          <span></span>
-          JOIN CENSUS
-        </div>
-
-        <h2>
-          Put your place on the map
-        </h2>
-
-      </div>
-
+      <div><div class="kicker"><span></span>JOIN CENSUS</div><h2>Put your place on the map</h2></div>
     </div>
-
-
-    <!-- STEPS -->
-
     <div class="steps">
-
-      <div class="step active">
-        <i>1</i>
-        <span>Connect</span>
-      </div>
-
-      <div class="line"></div>
-
-      <div class="step">
-        <i>2</i>
-        <span>Location</span>
-      </div>
-
-      <div class="line"></div>
-
-      <div class="step">
-        <i>3</i>
-        <span>Review</span>
-      </div>
-
-      <div class="line"></div>
-
-      <div class="step">
-        <i>4</i>
-        <span>Publish</span>
-      </div>
-
+      <div class="step active"><i>1</i><span>Connect</span></div><div class="line"></div>
+      <div class="step"><i>2</i><span>Location</span></div><div class="line"></div>
+      <div class="step"><i>3</i><span>Review</span></div><div class="line"></div>
+      <div class="step"><i>4</i><span>Publish</span></div>
     </div>
-
-
     <div class="join-grid">
-
-
-      <!-- FORM -->
-
       <div class="card form-card">
-
-        <h3>
-          1. Connect your Hive account
-        </h3>
-
-        <p class="muted">
-          Enter the Hive account that will sign
-          the Census declaration.
-        </p>
-
-        <label for="account">
-          Hive username
-        </label>
-
-
+        <h3>1. Connect your Hive account</h3>
+        <p class="muted">Enter the Hive account that will sign the Census declaration.</p>
+        <label for="account">Hive username</label>
         <div class="field-row">
-
-          <div class="account-field">
-
-            <span>@</span>
-
-            <input
-              id="account"
-              placeholder="username"
-              autocomplete="off"
-            >
-
-          </div>
-
-          <button
-            id="handshakeBtn"
-            class="btn btn-dark"
-          >
-            Check Keychain
-          </button>
-
+          <div class="account-field"><span>@</span><input id="account" placeholder="username" autocomplete="off"></div>
+          <button id="handshakeBtn" type="button" class="btn btn-dark">Check Keychain</button>
         </div>
-
-
-        <!-- CURRENT CENSUS DECLARATION -->
-
-        <div
-          id="currentDeclaration"
-          class="selection hidden"
-          style="margin-top:16px"
-        >
-
-          <div class="mini">
-            CURRENT CENSUS DECLARATION
-          </div>
-
-          <div
-            id="currentDeclarationLocation"
-            style="margin-top:8px"
-          ></div>
-
-          <div style="margin-top:14px">
-
-            <button
-              id="leaveCensusBtn"
-              type="button"
-              class="btn btn-dark"
-            >
-              Leave Census
-            </button>
-
-          </div>
-
-          <div
-            id="leaveCensusConfirm"
-            class="hidden"
-            style="margin-top:16px"
-          >
-
+        <div class="wallet-methods" aria-label="Wallet authentication methods">
+          <button id="formKeychainBtn" type="button" class="btn btn-dark">Use Hive Keychain</button>
+          <button id="formHiveAuthBtn" type="button" class="btn btn-ghost" disabled title="HiveAuth integration is being activated">Use HiveAuth · Coming soon</button>
+        </div>
+        <p class="muted wallet-method-note" id="walletMethodNote">Hive Keychain is currently available. HiveAuth support is being integrated.</p>
+        <div id="currentDeclaration" class="selection hidden" style="margin-top:16px">
+          <div class="mini">CURRENT CENSUS DECLARATION</div>
+          <div id="currentDeclarationLocation" style="margin-top:8px"></div>
+          <div style="margin-top:14px"><button id="leaveCensusBtn" type="button" class="btn btn-dark">Leave Census</button></div>
+          <div id="leaveCensusConfirm" class="hidden" style="margin-top:16px">
             <div class="warning">
-
-              <strong>
-                Remove your current Census location?
-              </strong>
-
-              <p>
-                This will publish a new
-                <code>hive_census</code>
-                operation:
-              </p>
-
+              <strong>Remove your current Census location?</strong>
+              <p>This will publish a new <code>hive_census</code> operation:</p>
               <pre>{"v":1,"action":"unset"}</pre>
-
-              <p>
-                Your account will disappear from the
-                current Census after the indexer processes
-                the operation. Previous declarations cannot
-                be deleted from the Hive blockchain.
-              </p>
-
+              <p>Your account will disappear from the current Census after the indexer processes the operation. Previous declarations cannot be deleted from the Hive blockchain.</p>
             </div>
-
-            <div
-              class="field-row"
-              style="margin-top:12px"
-            >
-
-              <button
-                id="cancelUnsetBtn"
-                type="button"
-                class="btn btn-dark"
-              >
-                Cancel
-              </button>
-
-              <button
-                id="publishUnsetBtn"
-                type="button"
-                class="btn btn-red"
-              >
-                Publish unset
-              </button>
-
+            <div class="field-row" style="margin-top:12px">
+              <button id="cancelUnsetBtn" type="button" class="btn btn-dark">Cancel</button>
+              <button id="publishUnsetBtn" type="button" class="btn btn-red">Publish unset</button>
             </div>
-
           </div>
-
         </div>
-
-
         <hr>
-
-
-        <!-- LOCATION -->
-
-        <h3>
-          2. Choose your city or town
-        </h3>
-
-        <p class="muted">
-          Start typing a locality. Search also supports
-          alternative, local and historical place names.
-          Census uses the public centre point of the
-          selected locality — not your home address
-          or device GPS.
-        </p>
-
-
-        <label for="placeQuery">
-          Location
-        </label>
-
-
-        <div class="field-row">
-
-          <input
-            id="placeQuery"
-            placeholder="e.g. Katowice, Poland"
-            autocomplete="off"
-          >
-
-        </div>
-
-
-        <div
-          id="results"
-          class="results"
-        ></div>
-
-
-        <div
-          id="selection"
-          class="selection hidden"
-        ></div>
-
-
-        <!-- PRIVACY WARNING -->
-
+        <h3>2. Choose your city or town</h3>
+        <p class="muted">Start typing a locality. Search also supports alternative, local and historical place names. Census uses the public centre point of the selected locality — not your home address or device GPS.</p>
+        <label for="placeQuery">Location</label>
+        <div class="field-row"><input id="placeQuery" placeholder="e.g. Katowice, Poland" autocomplete="off"></div>
+        <div id="results" class="results"></div>
+        <div id="selection" class="selection hidden"></div>
         <div class="warning">
-
-          <strong>
-            Permanent public record
-          </strong>
-
-          <p>
-            Hive is an immutable public blockchain.
-            A published Census declaration cannot
-            truly be deleted.
-
-            A later <code>unset</code> can make it
-            inactive in Census clients, but the
-            historical operation remains public.
-          </p>
-
+          <strong>Permanent public record</strong>
+          <p>Hive is an immutable public blockchain. A published Census declaration cannot truly be deleted. A later <code>unset</code> can make it inactive in Census clients, but the historical operation remains public.</p>
         </div>
-
-
         <label class="ack">
-
-          <input
-            id="permanentAck"
-            type="checkbox"
-          >
-
-          <span>
-            I understand that the selected location
-            and my Hive account will be permanently
-            associated in the public blockchain history.
-          </span>
-
+          <input id="permanentAck" type="checkbox">
+          <span>I understand that the selected location and my Hive account will be permanently associated in the public blockchain history.</span>
         </label>
-
-
-        <button
-          id="publishBtn"
-          class="btn btn-red publish"
-          disabled
-        >
-          Complete the steps above to publish
-        </button>
-
-
-        <div
-          id="status"
-          class="status"
-        ></div>
-
+        <button id="publishBtn" class="btn btn-red publish" disabled>Complete the steps above to publish</button>
+        <div id="status" class="status"></div>
       </div>
-
-
-      <!-- REVIEW -->
-
       <aside class="card review-card">
-
         <div class="review-head">
-
-          <div>
-
-            <span class="mini">
-              REVIEW
-            </span>
-
-            <h3>
-              On-chain declaration
-            </h3>
-
-          </div>
-
-          <span class="draft">
-            PROTOCOL v1.0
-          </span>
-
+          <div><span class="mini">REVIEW</span><h3>On-chain declaration</h3></div>
+          <span class="draft">PROTOCOL v1.0</span>
         </div>
-
-
         <pre id="jsonPreview">Choose a location to preview the exact data that will be signed.</pre>
-
-
         <dl>
-
-          <div>
-            <dt>Operation ID</dt>
-            <dd>
-              <code>hive_census</code>
-            </dd>
-          </div>
-
-          <div>
-            <dt>Authority</dt>
-            <dd>Posting</dd>
-          </div>
-
-          <div>
-            <dt>Protocol</dt>
-            <dd>v1.0</dd>
-          </div>
-
-          <div>
-            <dt>Private key</dt>
-            <dd>
-              Never shared with this site
-            </dd>
-          </div>
-
+          <div><dt>Operation ID</dt><dd><code>hive_census</code></dd></div>
+          <div><dt>Authority</dt><dd>Posting</dd></div>
+          <div><dt>Protocol</dt><dd>v1.0</dd></div>
+          <div><dt>Private key</dt><dd>Never shared with this site</dd></div>
         </dl>
-
-
-        <p class="fine">
-          Hive Keychain will show the operation
-          for approval before publishing.
-        </p>
-
+        <p class="fine" id="walletReviewNote">Hive Keychain will show the operation for approval before publishing. HiveAuth support is being integrated.</p>
       </aside>
-
     </div>
-
   </section>
-
-
-  <!-- ABOUT -->
-
-  <section
-    id="about"
-    class="manifesto"
-  >
-
-    <img
-      src="/assets/hive-logo.png"
-      alt=""
-    >
-
+  <section id="about" class="manifesto">
+    <img src="/assets/hive-logo.png" alt="">
     <div>
-
-      <div class="kicker">
-        <span></span>
-        WHY ON-CHAIN?
-      </div>
-
-      <h2>
-        The website is an interface.<br>
-        The blockchain is the record.
-      </h2>
-
-      <p>
-        Hive Census is designed as an open protocol.
-        If this website disappears, another client
-        can read compatible
-        <code>hive_census</code> operations and
-        reconstruct the Census without our database
-        or permission.
-      </p>
-
+      <div class="kicker"><span></span>WHY ON-CHAIN?</div>
+      <h2>The website is an interface.<br>The blockchain is the record.</h2>
+      <p>Hive Census is designed as an open protocol. If this website disappears, another client can read compatible <code>hive_census</code> operations and reconstruct the Census without our database or permission.</p>
     </div>
-
   </section>
-
 </main>
-
-
 <footer>
-
-  <span>
-    Hive Census
-  </span>
-
-  <span>
-    Open · On-chain · Community-built
-  </span>
-
-  <span>
-    Created by
-    <a
-      href="https://hive.blog/@jocieprosza"
-      target="_blank"
-      rel="noopener noreferrer"
-    >@jocieprosza</a>
-  </span>
-
+  <span>Hive Census</span>
+  <span>Open · On-chain · Community-built</span>
+  <span>Created by <a href="https://hive.blog/@jocieprosza" target="_blank" rel="noopener noreferrer">@jocieprosza</a></span>
 </footer>
-
-
-<script
-  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-></script>
-
+<!-- Reserved for the upcoming HiveAuth integration. Hidden until functional. -->
+<div id="hiveAuthModal" class="wallet-modal" role="dialog" aria-modal="true" aria-labelledby="hiveAuthModalTitle" hidden>
+  <div class="wallet-modal-panel">
+    <div class="wallet-modal-head">
+      <h3 id="hiveAuthModalTitle">Connect with HiveAuth</h3>
+      <button id="hiveAuthCloseBtn" class="wallet-modal-close" type="button" aria-label="Close">×</button>
+    </div>
+    <p id="hiveAuthModalStatus" class="muted" aria-live="polite">Waiting for a HiveAuth request…</p>
+    <div id="hiveAuthQr" aria-label="HiveAuth QR code"></div>
+    <div class="wallet-modal-actions">
+      <a id="hiveAuthOpenLink" class="btn btn-red" href="#join" hidden>Open in wallet</a>
+      <button id="hiveAuthCopyBtn" type="button" class="btn btn-dark" disabled>Copy link</button>
+      <button id="hiveAuthCancelBtn" type="button" class="btn btn-dark">Cancel</button>
+    </div>
+  </div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/app.js"></script>
-
+<script>
+  /* Temporary compatibility adapter. app.js still owns connectBtn. */
+  (() => {
+    const menu = document.getElementById("walletMenu");
+    const toggle = document.getElementById("connectBtn");
+    const options = document.getElementById("walletOptions");
+    const keychain = document.getElementById("walletKeychainBtn");
+    const formKeychain = document.getElementById("formKeychainBtn");
+    if (!menu || !toggle || !options) return;
+    toggle.onclick = event => {
+      event.preventDefault();
+      const opening = options.hidden;
+      options.hidden = !opening;
+      toggle.setAttribute("aria-expanded", String(opening));
+    };
+    const closeMenu = () => {
+      options.hidden = true;
+      toggle.setAttribute("aria-expanded", "false");
+    };
+    const chooseKeychain = () => {
+      closeMenu();
+      location.hash = "join";
+      document.getElementById("handshakeBtn")?.click();
+    };
+    keychain?.addEventListener("click", chooseKeychain);
+    formKeychain?.addEventListener("click", () => document.getElementById("handshakeBtn")?.click());
+    document.addEventListener("click", event => {
+      if (!menu.contains(event.target)) closeMenu();
+    });
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape") closeMenu();
+    });
+  })();
+</script>
 </body>
 </html>
