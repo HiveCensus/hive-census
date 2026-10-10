@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
   <title>Hive Census — Administration</title>
+
   <style>
     :root {
       color-scheme: dark;
@@ -26,12 +27,16 @@
 
     main {
       max-width: 640px;
-      margin: 48px auto;
+      margin: 32px auto;
     }
 
     h1 {
       font-size: 1.7rem;
       margin-bottom: 8px;
+    }
+
+    h2 {
+      font-size: 1.2rem;
     }
 
     p {
@@ -93,14 +98,30 @@
       color: #9ce6ba;
     }
 
+    .diagnostics {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      background: #0b1422;
+      border-radius: 8px;
+      padding: 16px;
+      color: #b9cce0;
+      font-family: ui-monospace, monospace;
+      font-size: .8rem;
+      line-height: 1.65;
+      max-height: 360px;
+      overflow-y: auto;
+    }
+
     [hidden] {
       display: none !important;
     }
   </style>
 </head>
+
 <body>
   <main>
     <h1>Hive Census Administration</h1>
+
     <p>
       Administrator authentication using Hive Keychain.
       Authorized account: <strong>@jocieprosza</strong>.
@@ -150,10 +171,43 @@
       hidden
     >
       <h2>Administration</h2>
+
       <p>
-        Authentication successful. Administrative
-        tools will be added in the next stage.
+        Authentication successful.
+        Administrative tools will be added in
+        the next stage.
       </p>
+    </section>
+
+    <section class="panel">
+      <h2>Authentication diagnostics</h2>
+
+      <p>
+        This log records authentication stages
+        without exposing signatures or challenges.
+      </p>
+
+      <div
+        id="diagnostics"
+        class="diagnostics"
+        aria-live="polite"
+      >Waiting for events...</div>
+
+      <div class="actions">
+        <button
+          id="copyLogButton"
+          class="secondary"
+        >
+          Copy diagnostic log
+        </button>
+
+        <button
+          id="clearLogButton"
+          class="secondary"
+        >
+          Clear log
+        </button>
+      </div>
     </section>
   </main>
 
@@ -161,6 +215,9 @@
     "use strict";
 
     const ADMIN_ACCOUNT = "jocieprosza";
+
+    const KEYCHAIN_TIMEOUT_MS = 45000;
+    const API_TIMEOUT_MS = 20000;
 
     const loginButton =
       document.getElementById("loginButton");
@@ -180,7 +237,35 @@
     const adminPanel =
       document.getElementById("adminPanel");
 
+    const diagnostics =
+      document.getElementById("diagnostics");
+
+    const copyLogButton =
+      document.getElementById("copyLogButton");
+
+    const clearLogButton =
+      document.getElementById("clearLogButton");
+
     let busy = false;
+    let logLines = [];
+
+    function log(event) {
+      const timestamp = new Date().toISOString();
+
+      const line = `[${timestamp}] ${event}`;
+
+      logLines.push(line);
+
+      if (logLines.length > 150) {
+        logLines = logLines.slice(-150);
+      }
+
+      diagnostics.textContent =
+        logLines.join("\n");
+
+      diagnostics.scrollTop =
+        diagnostics.scrollHeight;
+    }
 
     function setMessage(text, type = "") {
       message.textContent = text;
@@ -200,33 +285,73 @@
     }
 
     async function api(path, options = {}) {
-      const response = await fetch(path, {
-        credentials: "same-origin",
-        cache: "no-store",
-        ...options
-      });
+      const controller = new AbortController();
 
-      let data;
+      const timeout = setTimeout(() => {
+        controller.abort();
+      }, API_TIMEOUT_MS);
+
+      const started = performance.now();
+
+      log(`API request started: ${path}`);
 
       try {
-        data = await response.json();
-      } catch {
-        throw new Error(
-          "Server returned an invalid JSON response."
-        );
-      }
+        const response = await fetch(path, {
+          credentials: "same-origin",
+          cache: "no-store",
+          ...options,
+          signal: controller.signal
+        });
 
-      if (!response.ok || !data.ok) {
-        throw new Error(
-          data.error ||
-          `HTTP ${response.status}`
-        );
-      }
+        const elapsed = (
+          (performance.now() - started) / 1000
+        ).toFixed(2);
 
-      return data;
+        log(
+          `API response: ${path}, ` +
+          `HTTP ${response.status}, ${elapsed}s`
+        );
+
+        let data;
+
+        try {
+          data = await response.json();
+        } catch {
+          throw new Error(
+            `Invalid JSON response from ${path}`
+          );
+        }
+
+        if (!response.ok || !data.ok) {
+          throw new Error(
+            data.error ||
+            `HTTP ${response.status}`
+          );
+        }
+
+        return data;
+      } catch (error) {
+        if (error.name === "AbortError") {
+          log(`API timeout: ${path}`);
+
+          throw new Error(
+            `API timeout while requesting ${path}`
+          );
+        }
+
+        log(
+          `API failure: ${path}: ${error.message}`
+        );
+
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+      }
     }
 
     async function refreshSession() {
+      log("Checking administrator session");
+
       const session = await api(
         "/api/admin/session"
       );
@@ -247,6 +372,8 @@
           `Authenticated. Session expires: ${session.expires_at}`,
           "success"
         );
+
+        log("Administrator session authenticated");
       } else {
         sessionInfo.textContent =
           "Not authenticated.";
@@ -254,6 +381,8 @@
         setMessage(
           "Administrator authentication required."
         );
+
+        log("No active administrator session");
       }
 
       return authenticated;
@@ -262,14 +391,28 @@
     function getKeychain() {
       const keychain = window.hive_keychain;
 
+      log(
+        "Hive Keychain object available: " +
+        Boolean(keychain)
+      );
+
+      log(
+        "requestSignBuffer available: " +
+        (
+          typeof keychain?.requestSignBuffer ===
+          "function"
+        )
+      );
+
       if (
         !keychain ||
         typeof keychain.requestSignBuffer !==
           "function"
       ) {
         throw new Error(
-          "Hive Keychain signing interface is not available " +
-          "in this browser. Open this page inside Hive Keychain."
+          "Hive Keychain signing interface is " +
+          "not available. Open this page inside " +
+          "Hive Keychain."
         );
       }
 
@@ -284,12 +427,24 @@
       return new Promise((resolve, reject) => {
         let settled = false;
 
+        const started = performance.now();
+
+        const timeout = setTimeout(() => {
+          finish(
+            new Error(
+              "Hive Keychain callback timeout " +
+              "after 45 seconds."
+            )
+          );
+        }, KEYCHAIN_TIMEOUT_MS);
+
         function finish(error, signature) {
           if (settled) {
             return;
           }
 
           settled = true;
+          clearTimeout(timeout);
 
           if (error) {
             reject(error);
@@ -298,23 +453,50 @@
           }
         }
 
+        log(
+          "Calling Keychain requestSignBuffer"
+        );
+
+        log(`Signing account: @${account}`);
+        log("Key type: Posting");
+        log(`Message length: ${text.length}`);
+
         try {
           keychain.requestSignBuffer(
             account,
             text,
             "Posting",
             result => {
+              const elapsed = (
+                (performance.now() - started) / 1000
+              ).toFixed(2);
+
+              log(
+                `Keychain callback received after ${elapsed}s`
+              );
+
+              log(
+                "Keychain success: " +
+                Boolean(result?.success)
+              );
+
               if (
                 !result ||
                 result.success !== true
               ) {
-                finish(
-                  new Error(
-                    result?.message ||
-                    result?.error ||
-                    "Signature was rejected."
-                  )
+                const errorMessage =
+                  result?.message ||
+                  result?.error ||
+                  "Signature was rejected.";
+
+                log(
+                  "Keychain rejected signing request"
                 );
+
+                finish(
+                  new Error(errorMessage)
+                );
+
                 return;
               }
 
@@ -322,18 +504,37 @@
                 typeof result.result !== "string" ||
                 !result.result
               ) {
+                log(
+                  "Keychain returned no signature"
+                );
+
                 finish(
                   new Error(
                     "Keychain returned no signature."
                   )
                 );
+
                 return;
               }
+
+              log(
+                "Signature received successfully"
+              );
+
+              log(
+                "Signature length: " +
+                result.result.length
+              );
 
               finish(null, result.result);
             }
           );
         } catch (error) {
+          log(
+            "Keychain invocation exception: " +
+            error.message
+          );
+
           finish(error);
         }
       });
@@ -346,12 +547,16 @@
 
       setBusy(true);
 
+      log("=== LOGIN STARTED ===");
+
       try {
         const keychain = getKeychain();
 
         setMessage(
           "Requesting one-time authentication challenge..."
         );
+
+        log("Requesting authentication challenge");
 
         const challenge = await api(
           "/api/admin/challenge",
@@ -364,6 +569,8 @@
           }
         );
 
+        log("Authentication challenge received");
+
         if (
           challenge.account !== ADMIN_ACCOUNT ||
           typeof challenge.nonce !== "string" ||
@@ -374,6 +581,8 @@
           );
         }
 
+        log("Challenge structure validated");
+
         setMessage(
           "Waiting for Hive Keychain signature..."
         );
@@ -383,6 +592,8 @@
           ADMIN_ACCOUNT,
           challenge.message
         );
+
+        log("Proceeding to server verification");
 
         setMessage(
           "Verifying signature with Hive blockchain..."
@@ -402,8 +613,16 @@
           }
         );
 
+        log("Server accepted authentication");
+
         await refreshSession();
+
+        log("=== LOGIN COMPLETED ===");
       } catch (error) {
+        log(
+          "LOGIN FAILED: " + error.message
+        );
+
         setMessage(
           `Login failed: ${error.message}`,
           "error"
@@ -420,6 +639,8 @@
 
       setBusy(true);
 
+      log("Logout requested");
+
       try {
         await api(
           "/api/admin/logout",
@@ -433,7 +654,13 @@
         );
 
         await refreshSession();
+
+        log("Logout completed");
       } catch (error) {
+        log(
+          "Logout failed: " + error.message
+        );
+
         setMessage(
           `Logout failed: ${error.message}`,
           "error"
@@ -465,6 +692,11 @@
         try {
           await refreshSession();
         } catch (error) {
+          log(
+            "Session refresh failed: " +
+            error.message
+          );
+
           setMessage(
             `Session check failed: ${error.message}`,
             "error"
@@ -475,9 +707,47 @@
       }
     );
 
+    copyLogButton.addEventListener(
+      "click",
+      async () => {
+        const text = logLines.join("\n");
+
+        try {
+          await navigator.clipboard.writeText(text);
+
+          setMessage(
+            "Diagnostic log copied.",
+            "success"
+          );
+        } catch {
+          setMessage(
+            "Could not copy log. Select the " +
+            "diagnostic text manually.",
+            "error"
+          );
+        }
+      }
+    );
+
+    clearLogButton.addEventListener(
+      "click",
+      () => {
+        logLines = [];
+        diagnostics.textContent =
+          "Diagnostic log cleared.";
+      }
+    );
+
+    log("Administration page initialized");
+
     refreshSession().catch(error => {
       sessionInfo.textContent =
         "Unable to check session.";
+
+      log(
+        "Initial session check failed: " +
+        error.message
+      );
 
       setMessage(
         error.message,
