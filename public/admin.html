@@ -14,13 +14,17 @@
 * { box-sizing: border-box; }
 body {
   margin: 0;
+  padding: 16px;
   background: #101827;
   color: #edf2f7;
-  padding: 16px;
 }
-main { max-width: 950px; margin: 16px auto 50px; }
+main {
+  max-width: 1050px;
+  margin: 16px auto 50px;
+}
 h1 { font-size: 1.6rem; }
-h2 { font-size: 1.15rem; margin-top: 0; }
+h2 { font-size: 1.2rem; margin-top: 0; }
+h3 { font-size: 1rem; }
 p { color: #b8c5d6; line-height: 1.5; }
 .panel {
   background: #1c293b;
@@ -46,7 +50,32 @@ button {
   cursor: pointer;
 }
 button.secondary { background: #40536b; }
-button:disabled { opacity: .5; cursor: not-allowed; }
+button.green { background: #287f60; }
+button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+input, select {
+  width: 100%;
+  padding: 11px;
+  border: 1px solid #50647e;
+  border-radius: 8px;
+  background: #111c2b;
+  color: #edf2f7;
+  font: inherit;
+}
+label {
+  display: block;
+  font-size: .85rem;
+  color: #b8c5d6;
+  margin-bottom: 6px;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: 14px;
+}
+.form-grid .full { grid-column: 1 / -1; }
 .metrics {
   display: grid;
   grid-template-columns: repeat(auto-fit,minmax(145px,1fr));
@@ -59,11 +88,14 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   border-radius: 9px;
   padding: 13px;
 }
-.label { color: #aebfd2; font-size: .8rem; }
-.value {
+.metric-label {
+  color: #aebfd2;
+  font-size: .8rem;
+}
+.metric-value {
   margin-top: 6px;
-  font-weight: 700;
   font-size: 1.2rem;
+  font-weight: 700;
   overflow-wrap: anywhere;
 }
 .details {
@@ -85,7 +117,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
 }
 pre {
   font-family: ui-monospace, monospace;
-  max-height: 420px;
+  max-height: 340px;
   overflow-y: auto;
 }
 .success { color: #9ce6ba; }
@@ -115,8 +147,49 @@ th, td {
   font-size: .85rem;
 }
 .scroll { overflow-x: auto; }
+.location-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+.location-item {
+  width: 100%;
+  text-align: left;
+  background: #111c2b;
+  border: 1px solid #34465e;
+  border-radius: 10px;
+  padding: 13px;
+  color: #edf2f7;
+  font-weight: normal;
+}
+.location-item.selected {
+  border: 2px solid #e44d51;
+  background: #28364b;
+}
+.location-title {
+  display: block;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.location-meta {
+  display: block;
+  color: #b8c5d6;
+  font-size: .82rem;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+.review-detail {
+  padding: 14px;
+  background: #111c2b;
+  border-radius: 9px;
+  margin-bottom: 16px;
+  overflow-wrap: anywhere;
+}
+.muted { color: #aebfd2; }
+.small { font-size: .82rem; }
 [hidden] { display: none !important; }
 @media(max-width:550px) {
+  .form-grid { grid-template-columns: 1fr; }
   .details { grid-template-columns: 1fr; gap: 4px; }
   dd { margin-bottom: 8px; }
 }
@@ -124,147 +197,415 @@ th, td {
 </head>
 <body>
 <main>
+
 <h1>Hive Census Administration</h1>
-<p>Authorized administrator: <strong>@jocieprosza</strong></p>
+<p>
+  Authorized administrator:
+  <strong>@jocieprosza</strong>
+</p>
 
 <section class="panel">
-<h2>Administrator session</h2>
-<p id="sessionInfo">Checking session...</p>
-<div class="actions">
-<button id="loginButton" hidden>Sign in with Hive Keychain</button>
-<button id="logoutButton" class="secondary" hidden>Sign out</button>
-<button id="refreshButton" class="secondary">Refresh session</button>
-</div>
-<div id="message" class="status" role="status">Initializing...</div>
+  <h2>Administrator session</h2>
+  <p id="sessionInfo">Checking session...</p>
+  <div class="actions">
+    <button id="loginButton" hidden>
+      Sign in with Hive Keychain
+    </button>
+    <button id="logoutButton" class="secondary" hidden>
+      Sign out
+    </button>
+    <button id="refreshButton" class="secondary">
+      Refresh session
+    </button>
+  </div>
+  <div id="message" class="status" role="status">
+    Initializing...
+  </div>
 </section>
 
 <div id="adminPanel" hidden>
 
 <section class="panel">
-<div class="heading">
-<h2>System dashboard</h2>
-<button id="refreshDataButton" class="secondary">Refresh data</button>
-</div>
-<p>Operational status — manually refreshed.</p>
-<div id="dashboardMessage" class="status">Waiting for data...</div>
-<p id="dashboardUpdated"></p>
+  <div class="heading">
+    <h2>System dashboard</h2>
+    <button id="refreshDataButton" class="secondary">
+      Refresh data
+    </button>
+  </div>
+  <div id="dashboardMessage" class="status">
+    Waiting for data...
+  </div>
+  <p id="dashboardUpdated"></p>
 </section>
 
 <section class="panel">
-<div class="heading">
-<h2>Hive Census Indexer</h2>
-<span id="indexerBadge" class="pill">Unknown</span>
-</div>
-<div class="metrics">
-<div class="metric"><div class="label">Census accounts</div><div class="value" id="censusAccounts">—</div></div>
-<div class="metric"><div class="label">Blocks behind</div><div class="value" id="blocksBehind">—</div></div>
-<div class="metric"><div class="label">Last scanned block</div><div class="value" id="lastScannedBlock">—</div></div>
-<div class="metric"><div class="label">Blocks per scan</div><div class="value" id="scheduledBlocks">—</div></div>
-</div>
-<dl class="details">
-<dt>Irreversible block</dt><dd id="irreversibleBlock">—</dd>
-<dt>Last scheduled run</dt><dd id="lastScheduledRun">—</dd>
-<dt>Last successful scan</dt><dd id="lastSuccessfulScan">—</dd>
-<dt>Last scan completed</dt><dd id="lastScanCompleted">—</dd>
-<dt>Last scan size</dt><dd id="lastScanBlocks">—</dd>
-<dt>Last error</dt><dd id="indexerError">—</dd>
-</dl>
+  <div class="heading">
+    <h2>Hive Census Indexer</h2>
+    <span id="indexerBadge" class="pill">Unknown</span>
+  </div>
+  <div class="metrics">
+    <div class="metric">
+      <div class="metric-label">Census accounts</div>
+      <div class="metric-value" id="censusAccounts">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Blocks behind</div>
+      <div class="metric-value" id="blocksBehind">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Last scanned block</div>
+      <div class="metric-value" id="lastScannedBlock">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Blocks per scan</div>
+      <div class="metric-value" id="scheduledBlocks">—</div>
+    </div>
+  </div>
+  <dl class="details">
+    <dt>Irreversible block</dt><dd id="irreversibleBlock">—</dd>
+    <dt>Last scheduled run</dt><dd id="lastScheduledRun">—</dd>
+    <dt>Last successful scan</dt><dd id="lastSuccessfulScan">—</dd>
+    <dt>Last scan completed</dt><dd id="lastScanCompleted">—</dd>
+    <dt>Last scan size</dt><dd id="lastScanBlocks">—</dd>
+    <dt>Last error</dt><dd id="indexerError">—</dd>
+  </dl>
 </section>
 
 <section class="panel">
-<div class="heading">
-<h2>Profile Importer</h2>
-<span id="profileBadge" class="pill">Unknown</span>
-</div>
-<div class="metrics">
-<div class="metric"><div class="label">Accounts scanned</div><div class="value" id="accountsScanned">—</div></div>
-<div class="metric"><div class="label">Profiles with location</div><div class="value" id="accountsWithLocation">—</div></div>
-<div class="metric"><div class="label">Unique locations</div><div class="value" id="uniqueLocations">—</div></div>
-<div class="metric"><div class="label">Pending classification</div><div class="value" id="pendingLocations">—</div></div>
-</div>
-<dl class="details">
-<dt>Last account</dt><dd id="lastProfileAccount">—</dd>
-<dt>Last import</dt><dd id="lastImportRun">—</dd>
-<dt>Accounts per run</dt><dd id="accountsPerRun">—</dd>
-<dt>Last error</dt><dd id="profileError">—</dd>
-</dl>
+  <div class="heading">
+    <h2>Profile Importer</h2>
+    <span id="profileBadge" class="pill">Unknown</span>
+  </div>
+  <div class="metrics">
+    <div class="metric">
+      <div class="metric-label">Accounts scanned</div>
+      <div class="metric-value" id="accountsScanned">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Profiles with location</div>
+      <div class="metric-value" id="accountsWithLocation">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Unique locations</div>
+      <div class="metric-value" id="uniqueLocations">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Pending classification</div>
+      <div class="metric-value" id="pendingLocations">—</div>
+    </div>
+  </div>
+  <dl class="details">
+    <dt>Last account</dt><dd id="lastProfileAccount">—</dd>
+    <dt>Last import</dt><dd id="lastImportRun">—</dd>
+    <dt>Accounts per run</dt><dd id="accountsPerRun">—</dd>
+    <dt>Last error</dt><dd id="profileError">—</dd>
+  </dl>
 </section>
 
 <section class="panel">
-<div class="heading">
-<h2>Location Classifier</h2>
-<span id="classifierBadge" class="pill">Unknown</span>
-</div>
-<div class="metrics">
-<div class="metric"><div class="label">Processed last run</div><div class="value" id="classifierProcessed">—</div></div>
-<div class="metric"><div class="label">Matched last run</div><div class="value" id="classifierMatched">—</div></div>
-<div class="metric"><div class="label">Ambiguous last run</div><div class="value" id="classifierAmbiguous">—</div></div>
-<div class="metric"><div class="label">Rejected last run</div><div class="value" id="classifierRejected">—</div></div>
-</div>
-<dl class="details">
-<dt>Version</dt><dd id="classifierVersion">—</dd>
-<dt>Last run</dt><dd id="classifierRun">—</dd>
-<dt>Last error</dt><dd id="classifierError">—</dd>
-</dl>
-<h3>Stored classifications</h3>
-<div class="scroll">
-<table>
-<thead><tr><th>Status</th><th>Type</th><th>Count</th></tr></thead>
-<tbody id="classifierCounts"></tbody>
-</table>
-</div>
+  <div class="heading">
+    <h2>Location Classifier</h2>
+    <span id="classifierBadge" class="pill">Unknown</span>
+  </div>
+  <div class="metrics">
+    <div class="metric">
+      <div class="metric-label">Processed last run</div>
+      <div class="metric-value" id="classifierProcessed">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Matched last run</div>
+      <div class="metric-value" id="classifierMatched">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Ambiguous last run</div>
+      <div class="metric-value" id="classifierAmbiguous">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Rejected last run</div>
+      <div class="metric-value" id="classifierRejected">—</div>
+    </div>
+  </div>
+  <dl class="details">
+    <dt>Version</dt><dd id="classifierVersion">—</dd>
+    <dt>Last run</dt><dd id="classifierRun">—</dd>
+    <dt>Last error</dt><dd id="classifierError">—</dd>
+  </dl>
+  <h3>Stored classifications</h3>
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Status</th><th>Type</th><th>Count</th></tr>
+      </thead>
+      <tbody id="classifierCounts"></tbody>
+    </table>
+  </div>
 </section>
 
 <section class="panel">
-<div class="heading">
-<h2>GeoNames Geocoder</h2>
-<span id="geocoderBadge" class="pill">Unknown</span>
-</div>
-<div class="metrics">
-<div class="metric"><div class="label">Processed last run</div><div class="value" id="geocoderProcessed">—</div></div>
-<div class="metric"><div class="label">Matched last run</div><div class="value" id="geocoderMatched">—</div></div>
-<div class="metric"><div class="label">Errors last run</div><div class="value" id="geocoderErrors">—</div></div>
-<div class="metric"><div class="label">Untried ambiguous</div><div class="value" id="remainingAmbiguous">—</div></div>
-</div>
-<dl class="details">
-<dt>Version</dt><dd id="geocoderVersion">—</dd>
-<dt>Last run</dt><dd id="geocoderRun">—</dd>
-<dt>Last error</dt><dd id="geocoderError">—</dd>
-</dl>
-<h3>Geocoding attempts</h3>
-<div class="scroll">
-<table>
-<thead><tr><th>Outcome</th><th>Count</th></tr></thead>
-<tbody id="geocoderAttempts"></tbody>
-</table>
-</div>
+  <div class="heading">
+    <h2>GeoNames Geocoder</h2>
+    <span id="geocoderBadge" class="pill">Unknown</span>
+  </div>
+  <div class="metrics">
+    <div class="metric">
+      <div class="metric-label">Processed last run</div>
+      <div class="metric-value" id="geocoderProcessed">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Matched last run</div>
+      <div class="metric-value" id="geocoderMatched">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Errors last run</div>
+      <div class="metric-value" id="geocoderErrors">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Untried ambiguous</div>
+      <div class="metric-value" id="remainingAmbiguous">—</div>
+    </div>
+  </div>
+  <dl class="details">
+    <dt>Version</dt><dd id="geocoderVersion">—</dd>
+    <dt>Last run</dt><dd id="geocoderRun">—</dd>
+    <dt>Last error</dt><dd id="geocoderError">—</dd>
+  </dl>
+  <h3>Geocoding attempts</h3>
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Outcome</th><th>Count</th></tr>
+      </thead>
+      <tbody id="geocoderAttempts"></tbody>
+    </table>
+  </div>
 </section>
+
+<section class="panel" id="reviewPanel">
+  <div class="heading">
+    <h2>Location Review</h2>
+    <span class="pill warn" id="reviewCountBadge">
+      Loading...
+    </span>
+  </div>
+
+  <p>
+    Manually resolve ambiguous locations.
+    Decisions apply to the shared location key,
+    while individual account overrides are preserved.
+  </p>
+
+  <div class="metrics">
+    <div class="metric">
+      <div class="metric-label">Ambiguous locations</div>
+      <div class="metric-value" id="reviewTotal">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Current page</div>
+      <div class="metric-value" id="reviewPageNumber">—</div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button id="loadReviewButton" class="secondary">
+      Refresh queue
+    </button>
+  </div>
+
+  <div id="reviewStatus" class="status">
+    Waiting for review queue...
+  </div>
+
+  <div style="margin-top:16px">
+    <label for="reviewSearch">
+      Filter locations on this page
+    </label>
+    <input
+      id="reviewSearch"
+      type="search"
+      placeholder="Search location text..."
+    >
+  </div>
+
+  <div
+    id="locationList"
+    class="location-list"
+  ></div>
+
+  <div class="actions">
+    <button id="previousPage" class="secondary">
+      Previous
+    </button>
+    <button id="nextPage" class="secondary">
+      Next
+    </button>
+  </div>
+
+  <p class="small muted" id="reviewPagination"></p>
+</section>
+
+<section class="panel" id="resolutionPanel" hidden>
+  <div class="heading">
+    <h2>Resolve location</h2>
+    <span class="pill warn">Manual decision</span>
+  </div>
+
+  <div class="review-detail">
+    <strong id="selectedLocationText">—</strong>
+    <p id="selectedLocationMeta"></p>
+  </div>
+
+  <form id="resolutionForm">
+    <div class="form-grid">
+      <div class="full">
+        <label for="resolutionAction">Decision</label>
+        <select id="resolutionAction">
+          <option value="match">Match geographical location</option>
+          <option value="reject">Reject location</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="matchFields">
+      <div class="form-grid" style="margin-top:14px">
+        <div class="full">
+          <label for="locationType">Location type</label>
+          <select id="locationType">
+            <option value="locality">Locality (city/town)</option>
+            <option value="region_proxy">
+              Region — representative city
+            </option>
+            <option value="country_proxy">
+              Country — representative city
+            </option>
+          </select>
+        </div>
+
+        <div>
+          <label for="countryCode">Country code (ISO 2)</label>
+          <input
+            id="countryCode"
+            maxlength="2"
+            placeholder="PL"
+            autocomplete="off"
+          >
+        </div>
+
+        <div>
+          <label for="countryName">Country name</label>
+          <input
+            id="countryName"
+            maxlength="150"
+            placeholder="Poland"
+          >
+        </div>
+
+        <div>
+          <label for="regionCode">Region code (optional)</label>
+          <input
+            id="regionCode"
+            maxlength="50"
+            placeholder="PL-24"
+          >
+        </div>
+
+        <div>
+          <label for="regionName">Region name</label>
+          <input
+            id="regionName"
+            maxlength="150"
+            placeholder="Silesian Voivodeship"
+          >
+        </div>
+
+        <div class="full">
+          <label for="cityName">
+            City / representative city
+          </label>
+          <input
+            id="cityName"
+            maxlength="150"
+            placeholder="Katowice"
+          >
+        </div>
+
+        <div>
+          <label for="latitude">Latitude</label>
+          <input
+            id="latitude"
+            type="number"
+            step="any"
+            min="-90"
+            max="90"
+            placeholder="50.2599"
+          >
+        </div>
+
+        <div>
+          <label for="longitude">Longitude</label>
+          <input
+            id="longitude"
+            type="number"
+            step="any"
+            min="-180"
+            max="180"
+            placeholder="19.0216"
+          >
+        </div>
+      </div>
+      <p class="small">
+        Coordinates must be verified before saving.
+        For a region or country, use an explicitly
+        selected representative city.
+      </p>
+    </div>
+
+    <div class="actions">
+      <button
+        id="saveResolutionButton"
+        type="submit"
+        class="green"
+      >
+        Save decision
+      </button>
+      <button
+        id="cancelResolutionButton"
+        type="button"
+        class="secondary"
+      >
+        Cancel
+      </button>
+    </div>
+  </form>
+
+  <div
+    id="resolutionMessage"
+    class="status"
+    role="status"
+    aria-live="polite"
+  >
+    No decision submitted.
+  </div>
+</section>
+
+</div>
 
 <section class="panel">
-<div class="heading">
-<h2>Location Review</h2>
-<span class="pill warn">Diagnostic mode</span>
-</div>
-<p>Test the authenticated ambiguous-location API. This test does not modify the database.</p>
-<div class="actions">
-<button id="testReviewButton">Test review API</button>
-<button id="copyReviewButton" class="secondary">Copy API response</button>
-</div>
-<div id="reviewStatus" class="status">Not tested yet.</div>
-<pre id="reviewResponse">Waiting for test...</pre>
+  <h2>Diagnostics</h2>
+  <p>
+    Authentication and API requests.
+    Challenges and signatures are not logged.
+  </p>
+  <pre id="diagnostics">Waiting for events...</pre>
+  <div class="actions">
+    <button id="copyLogButton" class="secondary">
+      Copy diagnostic log
+    </button>
+    <button id="clearLogButton" class="secondary">
+      Clear log
+    </button>
+  </div>
 </section>
 
-</div>
-
-<section class="panel">
-<h2>Authentication diagnostics</h2>
-<p>Authentication and API request log. Signatures and challenges are not recorded.</p>
-<pre id="diagnostics">Waiting for events...</pre>
-<div class="actions">
-<button id="copyLogButton" class="secondary">Copy diagnostic log</button>
-<button id="clearLogButton" class="secondary">Clear log</button>
-</div>
-</section>
 </main>
 
 <script>
@@ -273,24 +614,33 @@ th, td {
 const ADMIN_ACCOUNT = "jocieprosza";
 const KEYCHAIN_TIMEOUT_MS = 45000;
 const API_TIMEOUT_MS = 20000;
+const REVIEW_PAGE_SIZE = 20;
 
 const $ = id => document.getElementById(id);
 
 let busy = false;
 let authenticated = false;
 let loadingDashboard = false;
-let testingReview = false;
+let loadingReview = false;
+let savingResolution = false;
 let logLines = [];
-let reviewResult = "";
+
+let reviewOffset = 0;
+let reviewTotal = 0;
+let reviewLocations = [];
+let selectedLocation = null;
 
 function log(event) {
   logLines.push(
     `[${new Date().toISOString()}] ${event}`
   );
+
   if (logLines.length > 150) {
     logLines = logLines.slice(-150);
   }
-  $("diagnostics").textContent = logLines.join("\n");
+
+  $("diagnostics").textContent =
+    logLines.join("\n");
 }
 
 function setMessage(value, type = "") {
@@ -300,22 +650,36 @@ function setMessage(value, type = "") {
 
 function setBusy(value) {
   busy = value;
-  ["loginButton", "logoutButton", "refreshButton"]
-    .forEach(id => $(id).disabled = value);
+
+  [
+    "loginButton",
+    "logoutButton",
+    "refreshButton"
+  ].forEach(id => {
+    $(id).disabled = value;
+  });
 }
 
 function display(id, value) {
   $(id).textContent =
-    value === null || value === undefined || value === ""
+    value === null ||
+    value === undefined ||
+    value === ""
       ? "—"
       : String(value);
 }
 
 function num(value) {
-  if (value === null || value === undefined || value === "") {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
     return "—";
   }
+
   const n = Number(value);
+
   return Number.isFinite(n)
     ? n.toLocaleString("en-US")
     : "—";
@@ -323,12 +687,15 @@ function num(value) {
 
 function date(value) {
   if (!value) return "—";
+
   const normalized =
     typeof value === "string" &&
     /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(value)
       ? value.replace(" ", "T") + "Z"
       : value;
+
   const d = new Date(normalized);
+
   return Number.isNaN(d.getTime())
     ? String(value)
     : d.toLocaleString();
@@ -342,6 +709,7 @@ function badge(id, label, kind = "") {
 function rows(id, items, fields) {
   const tbody = $(id);
   tbody.replaceChildren();
+
   if (!Array.isArray(items) || !items.length) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
@@ -351,73 +719,109 @@ function rows(id, items, fields) {
     tbody.appendChild(tr);
     return;
   }
+
   for (const item of items) {
     const tr = document.createElement("tr");
+
     for (const field of fields) {
       const td = document.createElement("td");
+
       td.textContent =
-        item?.[field] == null ? "—" : String(item[field]);
+        item?.[field] == null
+          ? "—"
+          : String(item[field]);
+
       tr.appendChild(td);
     }
+
     tbody.appendChild(tr);
   }
 }
 
 async function api(path, options = {}) {
   const controller = new AbortController();
+
   const timer = setTimeout(
     () => controller.abort(),
     API_TIMEOUT_MS
   );
+
   const url = new URL(path, location.origin);
-  url.searchParams.set("_t", String(Date.now()));
+
+  url.searchParams.set(
+    "_t",
+    String(Date.now())
+  );
+
   const started = performance.now();
 
   log("API request started: " + url.pathname);
 
   try {
-    const response = await fetch(url.toString(), {
-      credentials: "same-origin",
-      cache: "no-store",
-      ...options,
-      signal: controller.signal
-    });
+    const response = await fetch(
+      url.toString(),
+      {
+        credentials: "same-origin",
+        cache: "no-store",
+        ...options,
+        signal: controller.signal
+      }
+    );
 
-    const seconds =
-      ((performance.now() - started) / 1000).toFixed(2);
+    const elapsed = (
+      (performance.now() - started) / 1000
+    ).toFixed(2);
 
     log(
       `API response: ${url.pathname}, ` +
-      `HTTP ${response.status}, ${seconds}s`
+      `HTTP ${response.status}, ${elapsed}s`
     );
 
     const data = await response.json();
 
     if (!response.ok || !data.ok) {
       throw new Error(
-        data.error || `HTTP ${response.status}`
+        data.error ||
+        `HTTP ${response.status}`
       );
     }
 
     return data;
   } catch (error) {
     log(
-      `API failure: ${url.pathname}: ${error.message}`
+      `API failure: ${url.pathname}: ` +
+      error.message
     );
+
+    if (error.name === "AbortError") {
+      throw new Error(
+        "API request timed out"
+      );
+    }
+
     throw error;
   } finally {
     clearTimeout(timer);
   }
 }
 
+// ============================================================
+// DASHBOARD
+// ============================================================
+
 function renderIndexer(d) {
   const state = d.indexer_state || "unknown";
+
   badge(
     "indexerBadge",
     state.replaceAll("_", " "),
-    state === "synced" ? "good" :
-    ["error", "stalled"].includes(state) ? "bad" : "warn"
+    state === "synced"
+      ? "good"
+      : ["error", "stalled"].includes(state)
+        ? "bad"
+        : "warn"
   );
+
   display("censusAccounts", num(d.census_accounts));
   display("blocksBehind", num(d.blocks_behind));
   display("lastScannedBlock", num(d.last_scanned_block));
@@ -436,6 +840,7 @@ function renderProfiles(d) {
     d.import_complete ? "Complete" : "Importing",
     d.import_complete ? "good" : "warn"
   );
+
   display("accountsScanned", num(d.accounts_scanned));
   display("accountsWithLocation", num(d.accounts_with_location));
   display("uniqueLocations", num(d.unique_location_strings));
@@ -452,6 +857,7 @@ function renderClassifier(d) {
     d.last_classifier_error ? "Error" : "Available",
     d.last_classifier_error ? "bad" : "good"
   );
+
   display("classifierProcessed", num(d.last_classifier_processed));
   display("classifierMatched", num(d.last_classifier_matched));
   display("classifierAmbiguous", num(d.last_classifier_ambiguous));
@@ -459,18 +865,27 @@ function renderClassifier(d) {
   display("classifierVersion", d.classifier_version);
   display("classifierRun", date(d.last_classifier_run));
   display("classifierError", d.last_classifier_error || "None");
-  rows("classifierCounts", d.counts, [
-    "status", "location_type", "count"
-  ]);
+
+  rows(
+    "classifierCounts",
+    d.counts,
+    ["status", "location_type", "count"]
+  );
 }
 
 function renderGeocoder(d) {
   badge(
     "geocoderBadge",
-    !d.configured ? "Not configured" :
-    d.last_geocoder_error ? "Error" : "Configured",
-    !d.configured || d.last_geocoder_error ? "bad" : "good"
+    !d.configured
+      ? "Not configured"
+      : d.last_geocoder_error
+        ? "Error"
+        : "Configured",
+    !d.configured || d.last_geocoder_error
+      ? "bad"
+      : "good"
   );
+
   display("geocoderProcessed", num(d.last_geocoder_processed));
   display("geocoderMatched", num(d.last_geocoder_matched));
   display("geocoderErrors", num(d.last_geocoder_errors));
@@ -478,17 +893,26 @@ function renderGeocoder(d) {
   display("geocoderVersion", d.geocoder_version);
   display("geocoderRun", date(d.last_geocoder_run));
   display("geocoderError", d.last_geocoder_error || "None");
-  rows("geocoderAttempts", d.attempts, [
-    "outcome", "count"
-  ]);
+
+  rows(
+    "geocoderAttempts",
+    d.attempts,
+    ["outcome", "count"]
+  );
 }
 
 async function refreshDashboard() {
-  if (!authenticated || loadingDashboard) return;
+  if (!authenticated || loadingDashboard) {
+    return;
+  }
 
   loadingDashboard = true;
   $("refreshDataButton").disabled = true;
-  display("dashboardMessage", "Loading operational data...");
+
+  display(
+    "dashboardMessage",
+    "Loading operational data..."
+  );
 
   const endpoints = [
     ["/api/indexer/status", renderIndexer, "indexerBadge"],
@@ -506,16 +930,31 @@ async function refreshDashboard() {
 
     results.forEach((result, index) => {
       const [path, render, badgeId] = endpoints[index];
+
       if (result.status === "fulfilled") {
         try {
           render(result.value);
         } catch (error) {
-          errors.push(`${path}: ${error.message}`);
-          badge(badgeId, "Display error", "bad");
+          errors.push(
+            `${path}: ${error.message}`
+          );
+
+          badge(
+            badgeId,
+            "Display error",
+            "bad"
+          );
         }
       } else {
-        errors.push(`${path}: ${result.reason.message}`);
-        badge(badgeId, "Unavailable", "bad");
+        errors.push(
+          `${path}: ${result.reason.message}`
+        );
+
+        badge(
+          badgeId,
+          "Unavailable",
+          "bad"
+        );
       }
     });
 
@@ -523,15 +962,17 @@ async function refreshDashboard() {
       "dashboardMessage",
       errors.length
         ? "Errors:\n" + errors.join("\n")
-        : "All four operational endpoints responded successfully."
+        : "All operational endpoints responded successfully."
     );
 
     $("dashboardMessage").className =
-      "status " + (errors.length ? "error" : "success");
+      "status " +
+      (errors.length ? "error" : "success");
 
     display(
       "dashboardUpdated",
-      "Last refreshed: " + new Date().toLocaleString()
+      "Last refreshed: " +
+      new Date().toLocaleString()
     );
   } finally {
     loadingDashboard = false;
@@ -539,9 +980,458 @@ async function refreshDashboard() {
   }
 }
 
+// ============================================================
+// LOCATION REVIEW
+// ============================================================
+
+function setReviewStatus(text, type = "") {
+  $("reviewStatus").textContent = text;
+  $("reviewStatus").className =
+    "status " + type;
+}
+
+function closeResolution() {
+  selectedLocation = null;
+  $("resolutionPanel").hidden = true;
+  $("resolutionForm").reset();
+  $("matchFields").hidden = false;
+}
+
+function selectLocation(item) {
+  selectedLocation = item;
+
+  $("resolutionPanel").hidden = false;
+
+  display(
+    "selectedLocationText",
+    item.original_example
+  );
+
+  display(
+    "selectedLocationMeta",
+    `ID: ${item.id} | ` +
+    `Key: ${item.location_key} | ` +
+    `Affected accounts: ${item.affected_accounts}`
+  );
+
+  $("resolutionForm").reset();
+
+  $("matchFields").hidden = false;
+
+  $("resolutionMessage").textContent =
+    "Choose a decision and verify the data.";
+
+  $("resolutionMessage").className =
+    "status";
+
+  document.querySelectorAll(
+    ".location-item"
+  ).forEach(button => {
+    button.classList.toggle(
+      "selected",
+      Number(button.dataset.id) === item.id
+    );
+  });
+
+  $("resolutionPanel").scrollIntoView({
+    behavior: "smooth",
+    block: "start"
+  });
+}
+
+function renderReviewList() {
+  const list = $("locationList");
+  list.replaceChildren();
+
+  const query = $("reviewSearch")
+    .value.trim()
+    .toLowerCase();
+
+  const visible = reviewLocations.filter(item =>
+    String(item.original_example)
+      .toLowerCase()
+      .includes(query) ||
+    String(item.location_key)
+      .toLowerCase()
+      .includes(query)
+  );
+
+  if (!visible.length) {
+    const p = document.createElement("p");
+
+    p.textContent =
+      reviewLocations.length
+        ? "No locations match the page filter."
+        : "No ambiguous locations on this page.";
+
+    list.appendChild(p);
+    return;
+  }
+
+  for (const item of visible) {
+    const button = document.createElement("button");
+
+    button.type = "button";
+    button.className = "location-item";
+    button.dataset.id = String(item.id);
+
+    if (
+      selectedLocation &&
+      selectedLocation.id === item.id
+    ) {
+      button.classList.add("selected");
+    }
+
+    const title = document.createElement("span");
+    title.className = "location-title";
+    title.textContent = item.original_example;
+
+    const meta = document.createElement("span");
+    meta.className = "location-meta";
+    meta.textContent =
+      `${num(item.affected_accounts)} affected accounts` +
+      ` · ID ${item.id}` +
+      ` · ${item.source || "unknown source"}`;
+
+    button.append(title, meta);
+
+    button.addEventListener(
+      "click",
+      () => selectLocation(item)
+    );
+
+    list.appendChild(button);
+  }
+}
+
+function updatePagination() {
+  const page =
+    Math.floor(reviewOffset / REVIEW_PAGE_SIZE) + 1;
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(reviewTotal / REVIEW_PAGE_SIZE)
+  );
+
+  display("reviewTotal", num(reviewTotal));
+
+  display(
+    "reviewPageNumber",
+    `${page} / ${totalPages}`
+  );
+
+  badge(
+    "reviewCountBadge",
+    `${num(reviewTotal)} ambiguous`,
+    reviewTotal ? "warn" : "good"
+  );
+
+  $("previousPage").disabled =
+    loadingReview || reviewOffset === 0;
+
+  $("nextPage").disabled =
+    loadingReview ||
+    reviewOffset + REVIEW_PAGE_SIZE >= reviewTotal;
+
+  display(
+    "reviewPagination",
+    reviewTotal
+      ? `Showing ${reviewOffset + 1}–` +
+        `${Math.min(
+          reviewOffset + reviewLocations.length,
+          reviewTotal
+        )} of ${num(reviewTotal)}`
+      : "No ambiguous locations."
+  );
+}
+
+async function loadReviewQueue() {
+  if (!authenticated || loadingReview) {
+    return;
+  }
+
+  loadingReview = true;
+
+  $("loadReviewButton").disabled = true;
+  $("previousPage").disabled = true;
+  $("nextPage").disabled = true;
+
+  setReviewStatus(
+    "Loading ambiguous locations..."
+  );
+
+  try {
+    const data = await api(
+      `/api/admin/locations/ambiguous` +
+      `?limit=${REVIEW_PAGE_SIZE}` +
+      `&offset=${reviewOffset}`
+    );
+
+    if (!Array.isArray(data.locations)) {
+      throw new Error(
+        "Invalid review queue response"
+      );
+    }
+
+    reviewTotal = Number(data.total) || 0;
+    reviewLocations = data.locations;
+
+    closeResolution();
+
+    renderReviewList();
+
+    setReviewStatus(
+      `Loaded ${data.count} locations. ` +
+      `Total ambiguous: ${num(reviewTotal)}.`,
+      "success"
+    );
+
+    log(
+      `Review queue loaded: ` +
+      `${data.count} records, ` +
+      `${reviewTotal} total`
+    );
+  } catch (error) {
+    setReviewStatus(
+      "Could not load review queue: " +
+      error.message,
+      "error"
+    );
+
+    log(
+      "Review queue failed: " +
+      error.message
+    );
+  } finally {
+    loadingReview = false;
+    $("loadReviewButton").disabled = false;
+    updatePagination();
+  }
+}
+
+function getMatchPayload() {
+  const country = $("countryCode")
+    .value.trim()
+    .toUpperCase();
+
+  const countryName = $("countryName")
+    .value.trim();
+
+  const region = $("regionCode")
+    .value.trim();
+
+  const regionName = $("regionName")
+    .value.trim();
+
+  const city = $("cityName")
+    .value.trim();
+
+  const locationType =
+    $("locationType").value;
+
+  const latitudeText =
+    $("latitude").value.trim();
+
+  const longitudeText =
+    $("longitude").value.trim();
+
+  if (!/^[A-Z]{2}$/.test(country)) {
+    throw new Error(
+      "Enter a valid two-letter country code."
+    );
+  }
+
+  if (!countryName) {
+    throw new Error(
+      "Country name is required."
+    );
+  }
+
+  if (
+    !latitudeText ||
+    !longitudeText
+  ) {
+    throw new Error(
+      "Latitude and longitude are required."
+    );
+  }
+
+  const lat = Number(latitudeText);
+  const lon = Number(longitudeText);
+
+  if (
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lon) ||
+    lat < -90 ||
+    lat > 90 ||
+    lon < -180 ||
+    lon > 180
+  ) {
+    throw new Error(
+      "Invalid geographical coordinates."
+    );
+  }
+
+  if (!city) {
+    throw new Error(
+      "City or representative city is required."
+    );
+  }
+
+  if (
+    locationType === "region_proxy" &&
+    !regionName
+  ) {
+    throw new Error(
+      "Region name is required for a region proxy."
+    );
+  }
+
+  return {
+    id: selectedLocation.id,
+    action: "match",
+    location_type: locationType,
+    country,
+    country_name: countryName,
+    region: region || null,
+    region_name: regionName || null,
+    city,
+    lat,
+    lon
+  };
+}
+
+async function submitResolution(event) {
+  event.preventDefault();
+
+  if (
+    !authenticated ||
+    !selectedLocation ||
+    savingResolution
+  ) {
+    return;
+  }
+
+  let payload;
+
+  try {
+    payload =
+      $("resolutionAction").value === "reject"
+        ? {
+            id: selectedLocation.id,
+            action: "reject"
+          }
+        : getMatchPayload();
+  } catch (error) {
+    $("resolutionMessage").textContent =
+      error.message;
+
+    $("resolutionMessage").className =
+      "status error";
+
+    return;
+  }
+
+  const actionDescription =
+    payload.action === "reject"
+      ? "REJECT"
+      : "MATCH";
+
+  const confirmation =
+    `Confirm ${actionDescription} for:\n\n` +
+    `${selectedLocation.original_example}\n\n` +
+    `Affected accounts: ` +
+    `${selectedLocation.affected_accounts}\n\n` +
+    (
+      payload.action === "match"
+        ? `Country: ${payload.country_name}\n` +
+          `Region: ${payload.region_name || "—"}\n` +
+          `City: ${payload.city}\n` +
+          `Coordinates: ${payload.lat}, ${payload.lon}\n\n`
+        : ""
+    ) +
+    "This decision cannot currently be undone " +
+    "from the administration panel.";
+
+  if (!window.confirm(confirmation)) {
+    return;
+  }
+
+  savingResolution = true;
+  $("saveResolutionButton").disabled = true;
+
+  $("resolutionMessage").textContent =
+    "Saving decision...";
+
+  $("resolutionMessage").className =
+    "status";
+
+  try {
+    const result = await api(
+      "/api/admin/locations/resolve",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      }
+    );
+
+    log(
+      `Location ${result.id} resolved: ` +
+      `${result.status}; ` +
+      `${result.affected_profiles} profiles updated`
+    );
+
+    $("resolutionMessage").textContent =
+      `Saved: ${result.status}. ` +
+      `${num(result.affected_profiles)} ` +
+      `profile records updated.`;
+
+    $("resolutionMessage").className =
+      "status success";
+
+    const resolvedText =
+      selectedLocation.original_example;
+
+    closeResolution();
+
+    setReviewStatus(
+      `Successfully resolved "${resolvedText}". ` +
+      `${num(result.affected_profiles)} profiles updated.`,
+      "success"
+    );
+
+    await loadReviewQueue();
+    await refreshDashboard();
+  } catch (error) {
+    $("resolutionMessage").textContent =
+      "Save failed: " + error.message;
+
+    $("resolutionMessage").className =
+      "status error";
+
+    log(
+      "Resolution failed: " +
+      error.message
+    );
+  } finally {
+    savingResolution = false;
+    $("saveResolutionButton").disabled = false;
+  }
+}
+
+// ============================================================
+// AUTHENTICATION
+// ============================================================
+
 async function refreshSession() {
   log("Checking administrator session");
-  const session = await api("/api/admin/session");
+
+  const session = await api(
+    "/api/admin/session"
+  );
 
   authenticated =
     session.authenticated === true &&
@@ -556,14 +1446,27 @@ async function refreshSession() {
       "sessionInfo",
       "Signed in as @" + session.account
     );
+
     setMessage(
-      "Authenticated. Session expires: " + session.expires_at,
+      "Authenticated. Session expires: " +
+      session.expires_at,
       "success"
     );
-    log("Administrator session authenticated");
+
+    log(
+      "Administrator session authenticated"
+    );
   } else {
-    display("sessionInfo", "Not authenticated.");
-    setMessage("Administrator authentication required.");
+    display(
+      "sessionInfo",
+      "Not authenticated."
+    );
+
+    setMessage(
+      "Administrator authentication required."
+    );
+
+    closeResolution();
   }
 
   return authenticated;
@@ -571,42 +1474,64 @@ async function refreshSession() {
 
 function getKeychain() {
   const keychain = window.hive_keychain;
-  log("Hive Keychain available: " + Boolean(keychain));
+
+  log(
+    "Hive Keychain available: " +
+    Boolean(keychain)
+  );
 
   if (
     !keychain ||
     typeof keychain.requestSignBuffer !== "function"
   ) {
     throw new Error(
-      "Hive Keychain is unavailable. Open this page inside Hive Keychain."
+      "Hive Keychain is unavailable. " +
+      "Open this page inside Hive Keychain."
     );
   }
 
   return keychain;
 }
 
-function signChallenge(keychain, account, challengeText) {
+function signChallenge(
+  keychain,
+  account,
+  challengeText
+) {
   return new Promise((resolve, reject) => {
     let settled = false;
+
     const started = performance.now();
 
     const timeout = setTimeout(
-      () => finish(new Error("Hive Keychain callback timeout.")),
+      () => finish(
+        new Error(
+          "Hive Keychain callback timeout."
+        )
+      ),
       KEYCHAIN_TIMEOUT_MS
     );
 
     function finish(error, signature) {
       if (settled) return;
+
       settled = true;
       clearTimeout(timeout);
+
       if (error) reject(error);
       else resolve(signature);
     }
 
-    log("Calling Keychain requestSignBuffer");
+    log(
+      "Calling Keychain requestSignBuffer"
+    );
+
     log("Signing account: @" + account);
     log("Key type: Posting");
-    log("Message length: " + challengeText.length);
+    log(
+      "Message length: " +
+      challengeText.length
+    );
 
     try {
       keychain.requestSignBuffer(
@@ -614,21 +1539,32 @@ function signChallenge(keychain, account, challengeText) {
         challengeText,
         "Posting",
         result => {
-          const elapsed =
-            ((performance.now() - started) / 1000).toFixed(2);
+          const elapsed = (
+            (performance.now() - started) / 1000
+          ).toFixed(2);
 
           log(
             "Keychain callback received after " +
             elapsed + "s"
           );
-          log("Keychain success: " + Boolean(result?.success));
 
-          if (!result || result.success !== true) {
-            finish(new Error(
-              result?.message ||
-              result?.error ||
-              "Signature rejected."
-            ));
+          log(
+            "Keychain success: " +
+            Boolean(result?.success)
+          );
+
+          if (
+            !result ||
+            result.success !== true
+          ) {
+            finish(
+              new Error(
+                result?.message ||
+                result?.error ||
+                "Signature rejected."
+              )
+            );
+
             return;
           }
 
@@ -636,12 +1572,24 @@ function signChallenge(keychain, account, challengeText) {
             typeof result.result !== "string" ||
             !result.result
           ) {
-            finish(new Error("Keychain returned no signature."));
+            finish(
+              new Error(
+                "Keychain returned no signature."
+              )
+            );
+
             return;
           }
 
-          log("Signature received successfully");
-          log("Signature length: " + result.result.length);
+          log(
+            "Signature received successfully"
+          );
+
+          log(
+            "Signature length: " +
+            result.result.length
+          );
+
           finish(null, result.result);
         }
       );
@@ -653,29 +1601,41 @@ function signChallenge(keychain, account, challengeText) {
 
 async function login() {
   if (busy) return;
+
   setBusy(true);
   log("=== LOGIN STARTED ===");
 
   try {
     const keychain = getKeychain();
 
-    setMessage("Requesting authentication challenge...");
+    setMessage(
+      "Requesting authentication challenge..."
+    );
 
-    const challenge = await api("/api/admin/challenge", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}"
-    });
+    const challenge = await api(
+      "/api/admin/challenge",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: "{}"
+      }
+    );
 
     if (
       challenge.account !== ADMIN_ACCOUNT ||
       typeof challenge.nonce !== "string" ||
       typeof challenge.message !== "string"
     ) {
-      throw new Error("Invalid administrator challenge.");
+      throw new Error(
+        "Invalid administrator challenge."
+      );
     }
 
-    setMessage("Waiting for Hive Keychain signature...");
+    setMessage(
+      "Waiting for Hive Keychain signature..."
+    );
 
     const signature = await signChallenge(
       keychain,
@@ -683,25 +1643,43 @@ async function login() {
       challenge.message
     );
 
-    setMessage("Verifying signature...");
+    setMessage(
+      "Verifying signature..."
+    );
 
-    await api("/api/admin/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        nonce: challenge.nonce,
-        signature
-      })
-    });
+    await api(
+      "/api/admin/login",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          nonce: challenge.nonce,
+          signature
+        })
+      }
+    );
 
     if (await refreshSession()) {
-      await refreshDashboard();
+      await Promise.all([
+        refreshDashboard(),
+        loadReviewQueue()
+      ]);
     }
 
     log("=== LOGIN COMPLETED ===");
   } catch (error) {
-    log("LOGIN FAILED: " + error.message);
-    setMessage("Login failed: " + error.message, "error");
+    log(
+      "LOGIN FAILED: " +
+      error.message
+    );
+
+    setMessage(
+      "Login failed: " +
+      error.message,
+      "error"
+    );
   } finally {
     setBusy(false);
   }
@@ -709,209 +1687,208 @@ async function login() {
 
 async function logout() {
   if (busy) return;
+
   setBusy(true);
 
   try {
-    await api("/api/admin/logout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}"
-    });
-
-    await refreshSession();
-    log("Logout completed");
-  } catch (error) {
-    setMessage("Logout failed: " + error.message, "error");
-  } finally {
-    setBusy(false);
-  }
-}
-
-// LOCATION REVIEW DIAGNOSTICS
-async function testReviewApi() {
-  if (!authenticated || testingReview) return;
-
-  testingReview = true;
-  $("testReviewButton").disabled = true;
-  $("reviewStatus").textContent = "Testing review API...";
-  $("reviewResponse").textContent = "Waiting for response...";
-
-  const url = new URL(
-    "/api/admin/locations/ambiguous",
-    location.origin
-  );
-
-  url.searchParams.set("limit", "5");
-  url.searchParams.set("_t", String(Date.now()));
-
-  const started = performance.now();
-  const controller = new AbortController();
-  const timer = setTimeout(
-    () => controller.abort(),
-    API_TIMEOUT_MS
-  );
-
-  log("=== LOCATION REVIEW TEST STARTED ===");
-
-  try {
-    const response = await fetch(url.toString(), {
-      method: "GET",
-      credentials: "same-origin",
-      cache: "no-store",
-      headers: {
-        "Accept": "application/json"
-      },
-      signal: controller.signal
-    });
-
-    const elapsed =
-      ((performance.now() - started) / 1000).toFixed(2);
-
-    const contentType =
-      response.headers.get("content-type") || "(missing)";
-
-    const raw = await response.text();
-
-    let parsed = null;
-
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      // Preserve the raw response for diagnostics.
-    }
-
-    reviewResult = JSON.stringify({
-      request: url.pathname,
-      http_status: response.status,
-      http_ok: response.ok,
-      elapsed_seconds: Number(elapsed),
-      content_type: contentType,
-      response_length: raw.length,
-      response: parsed ?? raw.slice(0, 4000)
-    }, null, 2);
-
-    $("reviewResponse").textContent = reviewResult;
-
-    const success =
-      response.ok &&
-      parsed &&
-      parsed.ok === true &&
-      Array.isArray(parsed.locations);
-
-    $("reviewStatus").textContent = success
-      ? `SUCCESS — HTTP ${response.status}, ` +
-        `${parsed.count} locations returned, ` +
-        `${parsed.total} total.`
-      : `API TEST FAILED — HTTP ${response.status}. ` +
-        "See response details below.";
-
-    $("reviewStatus").className =
-      "status " + (success ? "success" : "error");
-
-    log(
-      `Location Review HTTP ${response.status}, ` +
-      `${elapsed}s, ${raw.length} characters`
+    await api(
+      "/api/admin/logout",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: "{}"
+      }
     );
 
-    if (success) {
-      log(
-        `Review queue: ${parsed.count} returned, ` +
-        `${parsed.total} total`
-      );
-    }
-  } catch (error) {
-    reviewResult = JSON.stringify({
-      error: error.name === "AbortError"
-        ? "Request timed out"
-        : error.message,
-      error_type: error.name
-    }, null, 2);
+    await refreshSession();
 
-    $("reviewStatus").textContent =
-      "API TEST FAILED — network or JavaScript error.";
-
-    $("reviewStatus").className = "status error";
-    $("reviewResponse").textContent = reviewResult;
-
-    log("Location Review test failed: " + error.message);
-  } finally {
-    clearTimeout(timer);
-    testingReview = false;
-    $("testReviewButton").disabled = false;
-    log("=== LOCATION REVIEW TEST COMPLETED ===");
-  }
-}
-
-$("loginButton").addEventListener("click", login);
-$("logoutButton").addEventListener("click", logout);
-
-$("refreshButton").addEventListener("click", async () => {
-  if (busy) return;
-  setBusy(true);
-
-  try {
-    if (await refreshSession()) {
-      await refreshDashboard();
-    }
+    log("Logout completed");
   } catch (error) {
     setMessage(
-      "Session check failed: " + error.message,
+      "Logout failed: " +
+      error.message,
       "error"
     );
   } finally {
     setBusy(false);
   }
-});
+}
+
+// ============================================================
+// EVENTS
+// ============================================================
+
+$("loginButton").addEventListener(
+  "click",
+  login
+);
+
+$("logoutButton").addEventListener(
+  "click",
+  logout
+);
+
+$("refreshButton").addEventListener(
+  "click",
+  async () => {
+    if (busy) return;
+
+    setBusy(true);
+
+    try {
+      if (await refreshSession()) {
+        await Promise.all([
+          refreshDashboard(),
+          loadReviewQueue()
+        ]);
+      }
+    } catch (error) {
+      setMessage(
+        "Session check failed: " +
+        error.message,
+        "error"
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+);
 
 $("refreshDataButton").addEventListener(
   "click",
   refreshDashboard
 );
 
-$("testReviewButton").addEventListener(
+$("loadReviewButton").addEventListener(
   "click",
-  testReviewApi
+  loadReviewQueue
 );
 
-$("copyReviewButton").addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(reviewResult);
-    $("reviewStatus").textContent = "API response copied.";
-  } catch {
-    $("reviewStatus").textContent =
-      "Could not copy. Select the response manually.";
-  }
-});
+$("reviewSearch").addEventListener(
+  "input",
+  renderReviewList
+);
 
-$("copyLogButton").addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(
-      logLines.join("\n")
+$("previousPage").addEventListener(
+  "click",
+  async () => {
+    if (
+      loadingReview ||
+      reviewOffset === 0
+    ) {
+      return;
+    }
+
+    reviewOffset = Math.max(
+      0,
+      reviewOffset - REVIEW_PAGE_SIZE
     );
-    setMessage("Diagnostic log copied.", "success");
-  } catch {
-    setMessage("Could not copy log.", "error");
+
+    await loadReviewQueue();
   }
-});
+);
 
-$("clearLogButton").addEventListener("click", () => {
-  logLines = [];
-  $("diagnostics").textContent = "Log cleared.";
-});
+$("nextPage").addEventListener(
+  "click",
+  async () => {
+    if (
+      loadingReview ||
+      reviewOffset + REVIEW_PAGE_SIZE >= reviewTotal
+    ) {
+      return;
+    }
 
-log("Administration page initialized");
+    reviewOffset += REVIEW_PAGE_SIZE;
+
+    await loadReviewQueue();
+  }
+);
+
+$("resolutionAction").addEventListener(
+  "change",
+  () => {
+    $("matchFields").hidden =
+      $("resolutionAction").value === "reject";
+  }
+);
+
+$("resolutionForm").addEventListener(
+  "submit",
+  submitResolution
+);
+
+$("cancelResolutionButton").addEventListener(
+  "click",
+  closeResolution
+);
+
+$("copyLogButton").addEventListener(
+  "click",
+  async () => {
+    try {
+      await navigator.clipboard.writeText(
+        logLines.join("\n")
+      );
+
+      setMessage(
+        "Diagnostic log copied.",
+        "success"
+      );
+    } catch {
+      setMessage(
+        "Could not copy diagnostic log.",
+        "error"
+      );
+    }
+  }
+);
+
+$("clearLogButton").addEventListener(
+  "click",
+  () => {
+    logLines = [];
+
+    $("diagnostics").textContent =
+      "Log cleared.";
+  }
+);
+
+// ============================================================
+// INITIALIZATION
+// ============================================================
+
+log(
+  "Hive Census Administration initialized"
+);
 
 refreshSession()
-  .then(isAuthenticated => {
-    if (isAuthenticated) return refreshDashboard();
+  .then(async isAuthenticated => {
+    if (isAuthenticated) {
+      await Promise.all([
+        refreshDashboard(),
+        loadReviewQueue()
+      ]);
+    }
   })
   .catch(error => {
     authenticated = false;
+
     $("adminPanel").hidden = true;
+
     $("sessionInfo").textContent =
       "Unable to check session.";
-    log("Initial session check failed: " + error.message);
-    setMessage(error.message, "error");
+
+    log(
+      "Initial session check failed: " +
+      error.message
+    );
+
+    setMessage(
+      error.message,
+      "error"
+    );
   });
 </script>
 </body>
