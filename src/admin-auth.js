@@ -9,6 +9,7 @@ export const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 export const ADMIN_SESSION_COOKIE = "hive_census_admin";
 
 const HEX_PATTERN = /^[0-9a-fA-F]+$/;
+
 const BASE58_ALPHABET =
   "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
@@ -108,6 +109,39 @@ export async function sha256Hex(value) {
   );
 }
 
+/*
+ * Administrator challenge.
+ *
+ * IMPORTANT:
+ * The authentication message must remain
+ * on a single line.
+ *
+ * Hive Keychain Mobile may time out when
+ * signing multiline messages containing
+ * newline characters.
+ *
+ * The message contains:
+ * - application identification
+ * - administrator account
+ * - random nonce
+ * - expiration timestamp
+ *
+ * The nonce is generated using crypto.randomUUID().
+ * The challenge expires after five minutes.
+ */
+
+function buildAdminChallengeMessage(
+  nonce,
+  expiresAt
+) {
+  return [
+    "Hive Census administrator authentication",
+    `Account: ${ADMIN_ACCOUNT}`,
+    `Nonce: ${nonce}`,
+    `Expires: ${expiresAt}`
+  ].join(" ");
+}
+
 export function createAdminChallenge() {
   const nonce = crypto.randomUUID();
 
@@ -115,12 +149,10 @@ export function createAdminChallenge() {
     Date.now() + ADMIN_CHALLENGE_TTL_MS
   ).toISOString();
 
-  const message = [
-    "Hive Census administrator authentication",
-    `Account: ${ADMIN_ACCOUNT}`,
-    `Nonce: ${nonce}`,
-    `Expires: ${expiresAt}`
-  ].join("\n");
+  const message = buildAdminChallengeMessage(
+    nonce,
+    expiresAt
+  );
 
   return {
     account: ADMIN_ACCOUNT,
@@ -155,12 +187,11 @@ export function validateAdminChallenge(
     return false;
   }
 
-  const expectedMessage = [
-    "Hive Census administrator authentication",
-    `Account: ${ADMIN_ACCOUNT}`,
-    `Nonce: ${challenge.nonce}`,
-    `Expires: ${challenge.expires_at}`
-  ].join("\n");
+  const expectedMessage =
+    buildAdminChallengeMessage(
+      challenge.nonce,
+      challenge.expires_at
+    );
 
   return challenge.message === expectedMessage;
 }
