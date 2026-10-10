@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html lang="en">
 <head>
@@ -41,17 +40,32 @@
 
   <nav aria-label="Main navigation">
     <a href="/#map" aria-current="page">Census Map</a>
-    <a href="/profiles">Profile Map</a>
+    <a href="/profiles/">Profile Map</a>
     <a href="/#join">Join Census</a>
     <a href="/#about">About</a>
   </nav>
 
-  <button
-    id="connectBtn"
-    class="btn btn-red"
-  >
-    Connect Keychain
-  </button>
+  <!-- HEADER ACTIONS -->
+
+  <div class="header-actions">
+
+    <a
+      href="/profiles/"
+      class="btn btn-dark mobile-profile-link"
+      aria-label="Open Profile Map"
+    >
+      Profile Map
+    </a>
+
+    <button
+      id="connectBtn"
+      type="button"
+      class="btn btn-red"
+    >
+      Connect Keychain
+    </button>
+
+  </div>
 
 </header>
 
@@ -228,7 +242,7 @@
 
       <a
         class="btn btn-dark"
-        href="/profiles"
+        href="/profiles/"
       >
         Explore Profile Map →
       </a>
