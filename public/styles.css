@@ -703,40 +703,88 @@ footer{
 
 /*
  * TABLETS AND MOBILE
+ *
+ * The header has two rows:
+ * 1. Brand + Connect Keychain
+ * 2. Census Map + Profile Map
  */
 
 @media(max-width:850px){
 
   .topbar{
-    height:68px;
-    padding:0 17px;
-    gap:8px
+    height:auto;
+    min-height:68px;
+    padding:10px 17px;
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:10px
   }
 
-  .topbar nav{
-    display:none
-  }
-
-  .header-actions{
-    gap:7px;
-    margin-left:auto;
-    flex-shrink:0
-  }
-
-  .mobile-profile-link{
-    display:inline-flex;
-    white-space:nowrap
-  }
-
-  .topbar .header-actions .btn{
-    padding:10px 9px;
-    font-size:11px;
-    line-height:1.2;
-    white-space:nowrap
+  .brand{
+    flex:1 1 auto;
+    min-width:0
   }
 
   .brand span{
     font-size:14px
+  }
+
+  .header-actions{
+    margin-left:auto;
+    flex-shrink:0;
+    gap:7px
+  }
+
+  .mobile-profile-link{
+    display:none
+  }
+
+  .topbar .header-actions .btn{
+    padding:10px 12px;
+    font-size:12px;
+    line-height:1.2;
+    white-space:nowrap
+  }
+
+  .topbar nav{
+    display:flex;
+    order:3;
+    flex:0 0 100%;
+    width:100%;
+    margin:0;
+    padding:10px 0 0;
+    border-top:1px solid var(--line);
+    justify-content:center;
+    gap:10px
+  }
+
+  .topbar nav a{
+    display:none
+  }
+
+  .topbar nav a[href="/#map"],
+  .topbar nav a[href="/profiles/"],
+  .topbar nav a[href="/profiles"]{
+    display:inline-flex;
+    flex:1 1 0;
+    align-items:center;
+    justify-content:center;
+    min-height:40px;
+    padding:8px 12px;
+    background:#181d24;
+    border:1px solid #343c47;
+    border-radius:8px;
+    color:white;
+    font-size:12px;
+    font-weight:700;
+    white-space:nowrap;
+    text-align:center
+  }
+
+  .topbar nav a[aria-current="page"]{
+    border-color:#8b3343;
+    background:#28171d
   }
 
   .hero{
@@ -855,20 +903,25 @@ footer{
     font-size:12px
   }
 
-  .header-actions{
-    gap:5px
+  .topbar .header-actions .btn{
+    padding:9px 9px;
+    font-size:11px
   }
 
-  .topbar .header-actions .btn{
-    padding:9px 7px;
-    font-size:10px
+  .topbar nav{
+    gap:8px
+  }
+
+  .topbar nav a[href="/#map"],
+  .topbar nav a[href="/profiles/"],
+  .topbar nav a[href="/profiles"]{
+    padding:8px;
+    font-size:12px
   }
 }
 
 /*
  * EXTRA SMALL MOBILE SCREENS
- *
- * Keep the brand and both buttons on one line.
  */
 
 @media(max-width:360px){
@@ -876,7 +929,7 @@ footer{
   .topbar{
     padding-left:8px;
     padding-right:8px;
-    gap:5px
+    gap:8px
   }
 
   .brand{
@@ -893,12 +946,12 @@ footer{
     font-size:11px
   }
 
-  .header-actions{
-    gap:4px
+  .topbar .header-actions .btn{
+    padding:8px;
+    font-size:10px
   }
 
-  .topbar .header-actions .btn{
-    padding:8px 5px;
-    font-size:9px
+  .topbar nav{
+    gap:6px
   }
 }
