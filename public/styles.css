@@ -31,6 +31,10 @@ a{
   color:inherit
 }
 
+/*
+ * HEADER
+ */
+
 .topbar{
   height:76px;
   padding:0 max(20px,5vw);
@@ -80,10 +84,6 @@ a{
   color:white
 }
 
-/*
- * HEADER ACTIONS
- */
-
 .header-actions{
   display:flex;
   align-items:center;
@@ -94,6 +94,10 @@ a{
 .mobile-profile-link{
   display:none
 }
+
+/*
+ * BUTTONS
+ */
 
 .btn{
   appearance:none;
@@ -125,6 +129,10 @@ a{
   color:white;
   border:1px solid #343c47
 }
+
+/*
+ * HERO
+ */
 
 .hero{
   min-height:600px;
@@ -229,6 +237,10 @@ h1 b{
   color:#15191f
 }
 
+/*
+ * SECTIONS
+ */
+
 .section{
   padding:72px max(20px,5vw)
 }
@@ -259,6 +271,10 @@ h1 b{
   border-radius:999px;
   padding:8px 11px
 }
+
+/*
+ * MAP
+ */
 
 .map-shell{
   height:520px;
@@ -292,6 +308,10 @@ h1 b{
   font-size:12px;
   color:#9ca7b2
 }
+
+/*
+ * STEPS
+ */
 
 .steps{
   display:flex;
@@ -333,6 +353,10 @@ h1 b{
   flex:1;
   margin:0 12px
 }
+
+/*
+ * JOIN CENSUS
+ */
 
 .join-grid{
   display:grid;
@@ -494,6 +518,10 @@ hr{
   font-size:13px
 }
 
+/*
+ * REVIEW
+ */
+
 .review-card{
   position:sticky;
   top:98px;
@@ -559,6 +587,10 @@ hr{
   margin-top:17px
 }
 
+/*
+ * ABOUT / FOOTER
+ */
+
 .manifesto{
   margin:30px max(20px,5vw) 80px;
   border-top:1px solid var(--line);
@@ -592,7 +624,6 @@ footer{
   font-size:12px;
   border-top:1px solid #1d2228
 }
-
 
 /*
  * BLOCKCHAIN / INDEXER STATUS
@@ -670,9 +701,8 @@ footer{
   background:#727b85
 }
 
-
 /*
- * RESPONSIVE
+ * TABLETS AND MOBILE
  */
 
 @media(max-width:850px){
@@ -701,7 +731,8 @@ footer{
   .topbar .header-actions .btn{
     padding:10px 9px;
     font-size:11px;
-    line-height:1.2
+    line-height:1.2;
+    white-space:nowrap
   }
 
   .brand span{
@@ -800,7 +831,6 @@ footer{
   }
 }
 
-
 /*
  * SMALL MOBILE SCREENS
  */
@@ -833,66 +863,42 @@ footer{
     padding:9px 7px;
     font-size:10px
   }
-
-/* MOBILE HEADER FIX */
-
-@media (max-width: 850px) {
-  .topbar {
-    height: auto;
-    min-height: 68px;
-    padding: 10px 17px;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-
-  .brand {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-
-  .header-actions {
-    margin-left: auto;
-    flex-shrink: 0;
-  }
-
-  .mobile-profile-link {
-    display: none;
-  }
-
-  .topbar .header-actions .btn {
-    font-size: 12px;
-    padding: 10px 12px;
-  }
-
-  .topbar nav {
-    display: flex;
-    order: 3;
-    flex: 0 0 100%;
-    justify-content: center;
-    gap: 8px;
-    margin: 0;
-    padding-top: 10px;
-    border-top: 1px solid var(--line);
-  }
-
-  .topbar nav a {
-    display: none;
-  }
-
-  .topbar nav a[href="/#map"],
-  .topbar nav a[href="/profiles/"] {
-    display: inline-flex;
-    justify-content: center;
-    padding: 8px 14px;
-    border: 1px solid #343c47;
-    border-radius: 8px;
-    background: #181d24;
-    color: white;
-    font-size: 12px;
-    font-weight: 700;
-    white-space: nowrap;
-  }
 }
 
-  
-} 
+/*
+ * EXTRA SMALL MOBILE SCREENS
+ *
+ * Keep the brand and both buttons on one line.
+ */
+
+@media(max-width:360px){
+
+  .topbar{
+    padding-left:8px;
+    padding-right:8px;
+    gap:5px
+  }
+
+  .brand{
+    gap:4px;
+    letter-spacing:0
+  }
+
+  .brand img{
+    width:20px;
+    height:20px
+  }
+
+  .brand span{
+    font-size:11px
+  }
+
+  .header-actions{
+    gap:4px
+  }
+
+  .topbar .header-actions .btn{
+    padding:8px 5px;
+    font-size:9px
+  }
+}
