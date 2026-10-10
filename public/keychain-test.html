@@ -1,0 +1,551 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  >
+  <meta name="robots" content="noindex, nofollow">
+
+  <title>Hive Keychain — Sign Buffer Test</title>
+
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 24px 16px;
+      background: #101827;
+      color: #edf2f7;
+    }
+
+    main {
+      max-width: 640px;
+      margin: 24px auto;
+    }
+
+    h1 {
+      font-size: 1.6rem;
+    }
+
+    p {
+      line-height: 1.6;
+      color: #b8c5d6;
+    }
+
+    .panel {
+      margin-top: 20px;
+      padding: 20px;
+      background: #1c293b;
+      border: 1px solid #34465e;
+      border-radius: 12px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+
+    input, select {
+      width: 100%;
+      margin-bottom: 16px;
+      padding: 12px;
+      border: 1px solid #40536b;
+      border-radius: 8px;
+      background: #101827;
+      color: white;
+      font: inherit;
+    }
+
+    button {
+      width: 100%;
+      margin-top: 10px;
+      padding: 14px;
+      border: 0;
+      border-radius: 8px;
+      background: #e44d51;
+      color: white;
+      font: inherit;
+      font-weight: 600;
+    }
+
+    button:disabled {
+      opacity: .5;
+    }
+
+    button.secondary {
+      background: #40536b;
+    }
+
+    pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      padding: 14px;
+      background: #0b1422;
+      border-radius: 8px;
+      font-size: .85rem;
+      line-height: 1.5;
+    }
+
+    .success {
+      color: #9ce6ba;
+    }
+
+    .error {
+      color: #ff9c9c;
+    }
+
+    .muted {
+      color: #b8c5d6;
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>Hive Keychain — Sign Buffer Test</h1>
+
+    <p>
+      Independent diagnostic tool for Hive Keychain
+      Mobile and browser extensions.
+    </p>
+
+    <section class="panel">
+      <h2>Environment</h2>
+      <pre id="environment">Checking...</pre>
+    </section>
+
+    <section class="panel">
+      <h2>Signature test</h2>
+
+      <label for="account">
+        Hive account
+      </label>
+
+      <input
+        id="account"
+        type="text"
+        value="jocieprosza"
+        autocomplete="off"
+        spellcheck="false"
+      >
+
+      <label for="keyType">
+        Key type
+      </label>
+
+      <select id="keyType">
+        <option value="Posting">
+          Posting
+        </option>
+        <option value="Active">
+          Active
+        </option>
+        <option value="Memo">
+          Memo
+        </option>
+      </select>
+
+      <label for="message">
+        Message
+      </label>
+
+      <input
+        id="message"
+        type="text"
+        value="Hive Census Keychain diagnostic test"
+      >
+
+      <button id="signButton">
+        Test Sign Buffer
+      </button>
+
+      <button
+        id="resetButton"
+        class="secondary"
+      >
+        Reset test
+      </button>
+    </section>
+
+    <section class="panel">
+      <h2>Test status</h2>
+      <pre id="status">Ready.</pre>
+
+      <h2>Keychain response</h2>
+      <pre id="result">No response yet.</pre>
+
+      <h2>Event log</h2>
+      <pre id="log">Waiting for test.</pre>
+
+      <button
+        id="copyButton"
+        class="secondary"
+      >
+        Copy diagnostic log
+      </button>
+    </section>
+  </main>
+
+  <script>
+    "use strict";
+
+    const accountInput =
+      document.getElementById("account");
+
+    const keyTypeInput =
+      document.getElementById("keyType");
+
+    const messageInput =
+      document.getElementById("message");
+
+    const signButton =
+      document.getElementById("signButton");
+
+    const resetButton =
+      document.getElementById("resetButton");
+
+    const copyButton =
+      document.getElementById("copyButton");
+
+    const environment =
+      document.getElementById("environment");
+
+    const status =
+      document.getElementById("status");
+
+    const result =
+      document.getElementById("result");
+
+    const log =
+      document.getElementById("log");
+
+    let startedAt = null;
+    let activeTest = false;
+    let events = [];
+
+    function timestamp() {
+      return new Date().toISOString();
+    }
+
+    function elapsed() {
+      if (startedAt === null) {
+        return "0.0";
+      }
+
+      return (
+        (performance.now() - startedAt) / 1000
+      ).toFixed(1);
+    }
+
+    function addLog(text) {
+      const entry =
+        `[${timestamp()}] ` +
+        `[+${elapsed()}s] ${text}`;
+
+      events.push(entry);
+
+      log.textContent = events.join("\n");
+
+      console.log("[Keychain Test]", text);
+    }
+
+    function setStatus(text, type = "") {
+      status.textContent = text;
+      status.className = type;
+    }
+
+    function inspectEnvironment() {
+      const keychain = window.hive_keychain;
+
+      const data = {
+        url: location.origin,
+        userAgent: navigator.userAgent,
+        keychainDetected: Boolean(keychain),
+        requestSignBufferAvailable:
+          typeof keychain?.requestSignBuffer ===
+          "function",
+        requestHandshakeAvailable:
+          typeof keychain?.requestHandshake ===
+          "function"
+      };
+
+      environment.textContent =
+        JSON.stringify(data, null, 2);
+
+      return data;
+    }
+
+    function sanitizeResponse(response) {
+      if (
+        !response ||
+        typeof response !== "object"
+      ) {
+        return response;
+      }
+
+      /*
+       * Show the response structure without
+       * publishing the complete signature.
+       */
+      const sanitized = {
+        success: response.success,
+        error: response.error,
+        message: response.message,
+        request_id: response.request_id,
+        resultType: typeof response.result
+      };
+
+      if (
+        typeof response.result === "string"
+      ) {
+        sanitized.signatureLength =
+          response.result.length;
+
+        sanitized.signaturePrefix =
+          response.result.slice(0, 4);
+      }
+
+      return sanitized;
+    }
+
+    function finishTest() {
+      activeTest = false;
+      signButton.disabled = false;
+      accountInput.disabled = false;
+      keyTypeInput.disabled = false;
+      messageInput.disabled = false;
+    }
+
+    function runTest() {
+      if (activeTest) {
+        return;
+      }
+
+      const account =
+        accountInput.value.trim().replace(/^@/, "");
+
+      const keyType = keyTypeInput.value;
+
+      const messageText =
+        messageInput.value;
+
+      if (!/^[a-z][a-z0-9.-]{2,15}$/.test(account)) {
+        setStatus(
+          "Invalid Hive account name.",
+          "error"
+        );
+        return;
+      }
+
+      if (!messageText.trim()) {
+        setStatus(
+          "Message cannot be empty.",
+          "error"
+        );
+        return;
+      }
+
+      events = [];
+      startedAt = performance.now();
+      activeTest = true;
+
+      signButton.disabled = true;
+      accountInput.disabled = true;
+      keyTypeInput.disabled = true;
+      messageInput.disabled = true;
+
+      result.textContent =
+        "Waiting for Keychain response...";
+
+      log.textContent = "";
+
+      addLog("Test started");
+      addLog(`Account: @${account}`);
+      addLog(`Key type: ${keyType}`);
+      addLog(
+        `Message length: ${messageText.length}`
+      );
+
+      const keychain = window.hive_keychain;
+
+      if (
+        !keychain ||
+        typeof keychain.requestSignBuffer !==
+          "function"
+      ) {
+        addLog(
+          "ERROR: requestSignBuffer unavailable"
+        );
+
+        setStatus(
+          "Hive Keychain API unavailable.",
+          "error"
+        );
+
+        finishTest();
+        return;
+      }
+
+      addLog("Calling requestSignBuffer");
+
+      setStatus(
+        "Waiting for Keychain confirmation..."
+      );
+
+      try {
+        keychain.requestSignBuffer(
+          account,
+          messageText,
+          keyType,
+          response => {
+            addLog(
+              "Keychain callback received"
+            );
+
+            const sanitized =
+              sanitizeResponse(response);
+
+            result.textContent =
+              JSON.stringify(
+                sanitized,
+                null,
+                2
+              );
+
+            if (response?.success === true) {
+              addLog(
+                "SUCCESS: signature returned"
+              );
+
+              setStatus(
+                "Signature returned successfully " +
+                `after ${elapsed()} seconds.`,
+                "success"
+              );
+            } else {
+              addLog(
+                "FAILURE: " +
+                (
+                  response?.message ||
+                  response?.error ||
+                  "Unknown Keychain error"
+                )
+              );
+
+              setStatus(
+                "Keychain returned an error " +
+                `after ${elapsed()} seconds.`,
+                "error"
+              );
+            }
+
+            finishTest();
+          }
+        );
+
+        addLog(
+          "requestSignBuffer invoked; " +
+          "waiting for callback"
+        );
+      } catch (error) {
+        addLog(
+          "EXCEPTION: " + error.message
+        );
+
+        setStatus(
+          error.message,
+          "error"
+        );
+
+        finishTest();
+      }
+    }
+
+    function resetTest() {
+      if (activeTest) {
+        addLog(
+          "UI reset while a request may still be pending"
+        );
+      }
+
+      events = [];
+      startedAt = null;
+      activeTest = false;
+
+      log.textContent =
+        "Waiting for test.";
+
+      result.textContent =
+        "No response yet.";
+
+      setStatus("Ready.");
+
+      finishTest();
+
+      inspectEnvironment();
+    }
+
+    async function copyLog() {
+      const diagnostic = [
+        "Hive Keychain Sign Buffer Diagnostic",
+        "",
+        "Environment:",
+        environment.textContent,
+        "",
+        "Status:",
+        status.textContent,
+        "",
+        "Response:",
+        result.textContent,
+        "",
+        "Events:",
+        events.join("\n")
+      ].join("\n");
+
+      try {
+        await navigator.clipboard.writeText(
+          diagnostic
+        );
+
+        addLog(
+          "Diagnostic copied to clipboard"
+        );
+      } catch {
+        addLog(
+          "Clipboard unavailable; use screenshots"
+        );
+      }
+    }
+
+    signButton.addEventListener(
+      "click",
+      runTest
+    );
+
+    resetButton.addEventListener(
+      "click",
+      resetTest
+    );
+
+    copyButton.addEventListener(
+      "click",
+      copyLog
+    );
+
+    inspectEnvironment();
+
+    addLog("Diagnostic page loaded");
+  </script>
+</body>
+</html>
