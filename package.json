@@ -8,6 +8,7 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
+    "@aioha/aioha": "1.8.5",
     "@noble/curves": "1.9.7"
   },
   "devDependencies": {
