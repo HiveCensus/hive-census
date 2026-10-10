@@ -35,18 +35,12 @@
     /*
      * HEADER
      *
-     * Desktop navigation uses the shared styles.css.
-     * Mobile navigation mirrors the Census Map layout.
+     * The shared styles.css controls the header
+     * on both Census Map and Profile Map.
+     *
+     * No separate mobile navigation or
+     * .topbar layout overrides are needed.
      */
-
-    .profile-mobile-nav {
-      display: none;
-    }
-
-    .profile-header-action {
-      margin-left: auto;
-      white-space: nowrap;
-    }
 
     /*
      * HERO
@@ -211,8 +205,8 @@
     }
 
     /*
-     * Same map tile appearance as Census Map.
-     * Apply the filter to tiles only, not markers.
+     * Apply the Census-like appearance
+     * to map tiles only, not markers.
      */
 
     #profileMapCanvas .leaflet-tile-pane {
@@ -331,85 +325,10 @@
     }
 
     /*
-     * MOBILE HEADER
-     */
-
-    @media (max-width: 850px) {
-
-      .topbar {
-        height: auto;
-        min-height: 0;
-        padding: 16px 17px 12px;
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
-        column-gap: 12px;
-        row-gap: 14px;
-        align-items: center;
-      }
-
-      .topbar .brand {
-        min-width: 0;
-        gap: 9px;
-        margin: 0;
-      }
-
-      .topbar .brand img {
-        width: 29px;
-        height: 29px;
-        flex-shrink: 0;
-      }
-
-      .topbar .brand span {
-        font-size: 14px;
-        letter-spacing: .045em;
-      }
-
-      .topbar > nav {
-        display: none;
-      }
-
-      .profile-header-action {
-        margin: 0;
-        padding: 10px 12px;
-        font-size: 12px;
-        white-space: nowrap;
-      }
-
-      .profile-mobile-nav {
-        grid-column: 1 / -1;
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
-        padding-top: 12px;
-        border-top: 1px solid var(--line);
-      }
-
-      .profile-mobile-nav a {
-        min-width: 0;
-        min-height: 44px;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        padding: 10px 8px;
-        border: 1px solid #343c47;
-        border-radius: 10px;
-        background: #181d24;
-        color: #fff;
-        text-align: center;
-        text-decoration: none;
-        font-size: 13px;
-        font-weight: 760;
-        line-height: 1.2;
-      }
-
-      .profile-mobile-nav a[aria-current="page"] {
-        border-color: #71313e;
-        background: #27171c;
-      }
-    }
-
-    /*
-     * SMALL SCREENS
+     * MOBILE CONTENT
+     *
+     * Header responsiveness is handled
+     * entirely by /styles.css.
      */
 
     @media (max-width: 700px) {
@@ -444,32 +363,30 @@
         padding: 9px 11px;
       }
     }
-
-    @media (max-width: 380px) {
-
-      .topbar .brand span {
-        font-size: 12px;
-      }
-
-      .profile-header-action {
-        font-size: 11px;
-        padding: 9px 10px;
-      }
-
-      .profile-mobile-nav a {
-        font-size: 12px;
-      }
-    }
   </style>
 </head>
 
 <body>
 
+<!--
+  SHARED HEADER STRUCTURE
+
+  This matches public/index.html:
+
+  .topbar
+    .brand
+    nav
+    .header-actions
+
+  Both pages therefore use the same
+  responsive rules from /styles.css.
+-->
+
 <header class="topbar">
 
   <a
     class="brand"
-    href="/"
+    href="/#top"
     aria-label="Hive Census home"
   >
     <img
@@ -489,27 +406,13 @@
     <a href="/#about">About</a>
   </nav>
 
-  <a
-    class="btn btn-red profile-header-action"
-    href="/#join"
-  >
-    Join Census
-  </a>
-
-  <div
-    class="profile-mobile-nav"
-    aria-label="Map navigation"
-  >
-
-    <a href="/#map">
-      Census Map
-    </a>
+  <div class="header-actions">
 
     <a
-      href="/profiles/"
-      aria-current="page"
+      class="btn btn-red"
+      href="/#join"
     >
-      Profile Map
+      Join Census
     </a>
 
   </div>
