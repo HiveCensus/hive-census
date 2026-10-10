@@ -23,10 +23,34 @@
   <link rel="stylesheet" href="/styles.css">
 
   <style>
+    /*
+     * PROFILE PAGE
+     */
+
     .profile-page {
       width: min(1200px, calc(100% - 40px));
       margin: 0 auto;
     }
+
+    /*
+     * HEADER
+     *
+     * Desktop navigation uses the shared styles.css.
+     * Mobile navigation mirrors the Census Map layout.
+     */
+
+    .profile-mobile-nav {
+      display: none;
+    }
+
+    .profile-header-action {
+      margin-left: auto;
+      white-space: nowrap;
+    }
+
+    /*
+     * HERO
+     */
 
     .profile-hero {
       padding: 75px 0 42px;
@@ -71,6 +95,10 @@
       color: #fff;
     }
 
+    /*
+     * MAP SECTION
+     */
+
     .profile-map-section {
       padding: 30px 0 70px;
     }
@@ -102,6 +130,10 @@
       letter-spacing: 0.05em;
     }
 
+    /*
+     * FILTERS
+     */
+
     .profile-toolbar {
       display: flex;
       justify-content: space-between;
@@ -122,11 +154,13 @@
       align-items: center;
       gap: 9px;
       padding: 11px 14px;
+      margin: 0;
       border: 1px solid #2c3642;
       border-radius: 9px;
       background: #111923;
       color: #e4eaf0;
       font-size: 13px;
+      font-weight: 600;
       cursor: pointer;
     }
 
@@ -134,6 +168,7 @@
       width: 16px;
       height: 16px;
       margin: 0;
+      padding: 0;
       accent-color: #20a9ff;
     }
 
@@ -157,6 +192,10 @@
       background: #b66bff;
     }
 
+    /*
+     * LEAFLET MAP
+     */
+
     .profile-map-container {
       position: relative;
       overflow: hidden;
@@ -169,6 +208,18 @@
       width: 100%;
       height: 580px;
       background: #0b1722;
+    }
+
+    /*
+     * Same map tile appearance as Census Map.
+     * Apply the filter to tiles only, not markers.
+     */
+
+    #profileMapCanvas .leaflet-tile-pane {
+      filter:
+        saturate(.55)
+        brightness(.72)
+        contrast(1.05);
     }
 
     .profile-map-summary {
@@ -203,6 +254,10 @@
       font-size: 13px;
     }
 
+    /*
+     * LEGEND
+     */
+
     .profile-legend {
       display: flex;
       justify-content: flex-end;
@@ -218,6 +273,10 @@
       align-items: center;
       gap: 7px;
     }
+
+    /*
+     * INFORMATION
+     */
 
     .profile-info-grid {
       display: grid;
@@ -243,6 +302,10 @@
       color: #42b7ff;
     }
 
+    /*
+     * POPUPS
+     */
+
     .profile-popup {
       min-width: 170px;
       color: #1b2632;
@@ -267,7 +330,90 @@
       line-height: 1.45;
     }
 
+    /*
+     * MOBILE HEADER
+     */
+
+    @media (max-width: 850px) {
+
+      .topbar {
+        height: auto;
+        min-height: 0;
+        padding: 16px 17px 12px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        column-gap: 12px;
+        row-gap: 14px;
+        align-items: center;
+      }
+
+      .topbar .brand {
+        min-width: 0;
+        gap: 9px;
+        margin: 0;
+      }
+
+      .topbar .brand img {
+        width: 29px;
+        height: 29px;
+        flex-shrink: 0;
+      }
+
+      .topbar .brand span {
+        font-size: 14px;
+        letter-spacing: .045em;
+      }
+
+      .topbar > nav {
+        display: none;
+      }
+
+      .profile-header-action {
+        margin: 0;
+        padding: 10px 12px;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .profile-mobile-nav {
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        padding-top: 12px;
+        border-top: 1px solid var(--line);
+      }
+
+      .profile-mobile-nav a {
+        min-width: 0;
+        min-height: 44px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 10px 8px;
+        border: 1px solid #343c47;
+        border-radius: 10px;
+        background: #181d24;
+        color: #fff;
+        text-align: center;
+        text-decoration: none;
+        font-size: 13px;
+        font-weight: 760;
+        line-height: 1.2;
+      }
+
+      .profile-mobile-nav a[aria-current="page"] {
+        border-color: #71313e;
+        background: #27171c;
+      }
+    }
+
+    /*
+     * SMALL SCREENS
+     */
+
     @media (max-width: 700px) {
+
       .profile-page {
         width: calc(100% - 28px);
       }
@@ -296,6 +442,22 @@
 
       .profile-filter {
         padding: 9px 11px;
+      }
+    }
+
+    @media (max-width: 380px) {
+
+      .topbar .brand span {
+        font-size: 12px;
+      }
+
+      .profile-header-action {
+        font-size: 11px;
+        padding: 9px 10px;
+      }
+
+      .profile-mobile-nav a {
+        font-size: 12px;
       }
     }
   </style>
@@ -328,11 +490,29 @@
   </nav>
 
   <a
-    class="btn btn-red"
+    class="btn btn-red profile-header-action"
     href="/#join"
   >
     Join Census
   </a>
+
+  <div
+    class="profile-mobile-nav"
+    aria-label="Map navigation"
+  >
+
+    <a href="/#map">
+      Census Map
+    </a>
+
+    <a
+      href="/profiles/"
+      aria-current="page"
+    >
+      Profile Map
+    </a>
+
+  </div>
 
 </header>
 
