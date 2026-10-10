@@ -6,207 +6,156 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
   <title>Hive Census — Administration</title>
-
   <style>
-    :root {
-      color-scheme: dark;
-      font-family: system-ui, -apple-system, sans-serif;
-    }
-
-    * {
-      box-sizing: border-box;
-    }
-
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background: #101827;
-      color: #edf2f7;
-      padding: 24px 16px;
-    }
-
-    main {
-      max-width: 640px;
-      margin: 32px auto;
-    }
-
-    h1 {
-      font-size: 1.7rem;
-      margin-bottom: 8px;
-    }
-
-    h2 {
-      font-size: 1.2rem;
-    }
-
-    p {
-      line-height: 1.6;
-      color: #b8c5d6;
-    }
-
-    .panel {
-      margin-top: 24px;
-      padding: 24px;
-      background: #1c293b;
-      border: 1px solid #34465e;
-      border-radius: 14px;
-    }
-
-    button {
-      border: 0;
-      border-radius: 8px;
-      padding: 12px 18px;
-      background: #e44d51;
-      color: white;
-      font: inherit;
-      font-weight: 600;
-      cursor: pointer;
-    }
-
-    button:disabled {
-      opacity: .5;
-      cursor: wait;
-    }
-
-    button.secondary {
-      background: #40536b;
-    }
-
-    .actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-      margin-top: 20px;
-    }
-
-    .status {
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      padding: 14px;
-      margin-top: 20px;
-      border-radius: 8px;
-      background: #111c2b;
-      color: #cdd8e5;
-      font-size: .9rem;
-    }
-
-    .error {
-      color: #ff9c9c;
-    }
-
-    .success {
-      color: #9ce6ba;
-    }
-
-    .diagnostics {
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      background: #0b1422;
-      border-radius: 8px;
-      padding: 16px;
-      color: #b9cce0;
-      font-family: ui-monospace, monospace;
-      font-size: .8rem;
-      line-height: 1.65;
-      max-height: 360px;
-      overflow-y: auto;
-    }
-
-    [hidden] {
-      display: none !important;
-    }
+    :root { color-scheme: dark; font-family: system-ui, -apple-system, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #101827; color: #edf2f7; padding: 20px 14px; }
+    main { max-width: 1000px; margin: 16px auto 48px; }
+    h1 { font-size: 1.65rem; margin: 0 0 8px; }
+    h2 { font-size: 1.18rem; margin: 0 0 12px; }
+    h3 { font-size: 1rem; margin: 18px 0 10px; }
+    p { line-height: 1.55; color: #b8c5d6; }
+    .panel { margin-top: 18px; padding: 20px; background: #1c293b; border: 1px solid #34465e; border-radius: 14px; }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    button { border: 0; border-radius: 8px; padding: 11px 16px; background: #e44d51; color: white; font: inherit; font-weight: 600; cursor: pointer; }
+    button.secondary { background: #40536b; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+    .status { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; margin-top: 16px; border-radius: 8px; background: #111c2b; color: #cdd8e5; font-size: .9rem; }
+    .error { color: #ff9c9c; }
+    .success { color: #9ce6ba; }
+    .muted { color: #aebfd2; }
+    .pill { display: inline-block; padding: 5px 10px; border-radius: 999px; background: #34465e; color: #e3edf8; font-size: .8rem; font-weight: 600; }
+    .pill.good { background: #184b39; color: #a3f1c4; }
+    .pill.warn { background: #5a431b; color: #ffe0a1; }
+    .pill.bad { background: #632c37; color: #ffb9bf; }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: 12px; margin-top: 14px; }
+    .metric { background: #111c2b; border: 1px solid #34465e; border-radius: 10px; padding: 14px; min-width: 0; }
+    .metric .label { color: #aebfd2; font-size: .8rem; line-height: 1.35; }
+    .metric .value { font-size: 1.25rem; font-weight: 700; margin-top: 6px; overflow-wrap: anywhere; }
+    .details { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr); gap: 9px 12px; margin-top: 16px; font-size: .9rem; }
+    .details dt { color: #aebfd2; }
+    .details dd { margin: 0; overflow-wrap: anywhere; }
+    .note { font-size: .88rem; }
+    .diagnostics { white-space: pre-wrap; overflow-wrap: anywhere; background: #0b1422; border-radius: 8px; padding: 16px; color: #b9cce0; font-family: ui-monospace, monospace; font-size: .8rem; line-height: 1.65; max-height: 360px; overflow-y: auto; }
+    .review-table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    .review-table th, .review-table td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #34465e; overflow-wrap: anywhere; }
+    .review-table th { color: #aebfd2; }
+    .scroll { overflow-x: auto; }
+    [hidden] { display: none !important; }
+    @media (max-width: 560px) { .panel { padding: 16px; } .details { grid-template-columns: 1fr; gap: 3px; } .details dd { margin-bottom: 9px; } }
   </style>
 </head>
-
 <body>
   <main>
     <h1>Hive Census Administration</h1>
-
-    <p>
-      Administrator authentication using Hive Keychain.
-      Authorized account: <strong>@jocieprosza</strong>.
-    </p>
+    <p>Administrator authentication using Hive Keychain. Authorized account: <strong>@jocieprosza</strong>.</p>
 
     <section class="panel">
       <h2>Administrator session</h2>
-
-      <p id="sessionInfo">
-        Checking session...
-      </p>
-
+      <p id="sessionInfo">Checking session...</p>
       <div class="actions">
-        <button id="loginButton" hidden>
-          Sign in with Hive Keychain
-        </button>
-
-        <button
-          id="logoutButton"
-          class="secondary"
-          hidden
-        >
-          Sign out
-        </button>
-
-        <button
-          id="refreshButton"
-          class="secondary"
-        >
-          Refresh session
-        </button>
+        <button id="loginButton" hidden>Sign in with Hive Keychain</button>
+        <button id="logoutButton" class="secondary" hidden>Sign out</button>
+        <button id="refreshButton" class="secondary">Refresh session</button>
       </div>
-
-      <div
-        id="message"
-        class="status"
-        role="status"
-        aria-live="polite"
-      >
-        Initializing...
-      </div>
+      <div id="message" class="status" role="status" aria-live="polite">Initializing...</div>
     </section>
 
-    <section
-      id="adminPanel"
-      class="panel"
-      hidden
-    >
-      <h2>Administration</h2>
+    <div id="adminPanel" hidden>
+      <section class="panel">
+        <div class="panel-head">
+          <h2>System dashboard</h2>
+          <button id="refreshDataButton" class="secondary">Refresh data</button>
+        </div>
+        <p class="note">Read-only operational data. Refresh is manual; no additional background polling.</p>
+        <div id="dashboardMessage" class="status" role="status" aria-live="polite">Waiting for data...</div>
+        <p class="note muted" id="dashboardUpdated">Not refreshed yet.</p>
+      </section>
 
-      <p>
-        Authentication successful.
-        Administrative tools will be added in
-        the next stage.
-      </p>
-    </section>
+      <section class="panel">
+        <div class="panel-head"><h2>Hive Census indexer</h2><span id="indexerBadge" class="pill">Unknown</span></div>
+        <div class="metrics">
+          <div class="metric"><div class="label">Census accounts</div><div class="value" id="censusAccounts">—</div></div>
+          <div class="metric"><div class="label">Blocks behind</div><div class="value" id="blocksBehind">—</div></div>
+          <div class="metric"><div class="label">Last scanned block</div><div class="value" id="lastScannedBlock">—</div></div>
+          <div class="metric"><div class="label">Blocks per scheduled scan</div><div class="value" id="scheduledBlocks">—</div></div>
+        </div>
+        <dl class="details">
+          <dt>Hive irreversible block</dt><dd id="irreversibleBlock">—</dd>
+          <dt>Last scheduled run</dt><dd id="lastScheduledRun">—</dd>
+          <dt>Last successful scan</dt><dd id="lastSuccessfulScan">—</dd>
+          <dt>Last scan completed</dt><dd id="lastScanCompleted">—</dd>
+          <dt>Last scan size</dt><dd id="lastScanBlocks">—</dd>
+          <dt>Last error</dt><dd id="indexerError">—</dd>
+        </dl>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Profile importer</h2><span id="profileBadge" class="pill">Unknown</span></div>
+        <div class="metrics">
+          <div class="metric"><div class="label">Accounts scanned</div><div class="value" id="accountsScanned">—</div></div>
+          <div class="metric"><div class="label">Profiles with location</div><div class="value" id="accountsWithLocation">—</div></div>
+          <div class="metric"><div class="label">Unique location strings</div><div class="value" id="uniqueLocations">—</div></div>
+          <div class="metric"><div class="label">Pending classification</div><div class="value" id="pendingLocations">—</div></div>
+        </div>
+        <dl class="details">
+          <dt>Last processed account</dt><dd id="lastProfileAccount">—</dd>
+          <dt>Last import run</dt><dd id="lastImportRun">—</dd>
+          <dt>Accounts per scheduled run</dt><dd id="accountsPerRun">—</dd>
+          <dt>Last error</dt><dd id="profileError">—</dd>
+        </dl>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Location classifier</h2><span id="classifierBadge" class="pill">Unknown</span></div>
+        <div class="metrics">
+          <div class="metric"><div class="label">Processed in last run</div><div class="value" id="classifierProcessed">—</div></div>
+          <div class="metric"><div class="label">Matched in last run</div><div class="value" id="classifierMatched">—</div></div>
+          <div class="metric"><div class="label">Ambiguous in last run</div><div class="value" id="classifierAmbiguous">—</div></div>
+          <div class="metric"><div class="label">Rejected in last run</div><div class="value" id="classifierRejected">—</div></div>
+        </div>
+        <dl class="details">
+          <dt>Classifier version</dt><dd id="classifierVersion">—</dd>
+          <dt>Last completed run</dt><dd id="classifierRun">—</dd>
+          <dt>Last error</dt><dd id="classifierError">—</dd>
+        </dl>
+        <h3>Stored location classifications</h3>
+        <div class="scroll"><table class="review-table"><thead><tr><th>Status</th><th>Location type</th><th>Count</th></tr></thead><tbody id="classifierCounts"><tr><td colspan="3">No data yet.</td></tr></tbody></table></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>GeoNames geocoder</h2><span id="geocoderBadge" class="pill">Unknown</span></div>
+        <div class="metrics">
+          <div class="metric"><div class="label">Processed in last run</div><div class="value" id="geocoderProcessed">—</div></div>
+          <div class="metric"><div class="label">Matched in last run</div><div class="value" id="geocoderMatched">—</div></div>
+          <div class="metric"><div class="label">Errors in last run</div><div class="value" id="geocoderErrors">—</div></div>
+          <div class="metric"><div class="label">Ambiguous not yet attempted</div><div class="value" id="remainingAmbiguous">—</div></div>
+        </div>
+        <dl class="details">
+          <dt>Geocoder version</dt><dd id="geocoderVersion">—</dd>
+          <dt>Last completed run</dt><dd id="geocoderRun">—</dd>
+          <dt>Last error</dt><dd id="geocoderError">—</dd>
+        </dl>
+        <h3>Geocoding attempts</h3>
+        <div class="scroll"><table class="review-table"><thead><tr><th>Outcome</th><th>Count</th></tr></thead><tbody id="geocoderAttempts"><tr><td colspan="2">No data yet.</td></tr></tbody></table></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Location Review</h2><span class="pill warn">Backend pending</span></div>
+        <p>Manual review of ambiguous locations will be available here. It will allow administrators to choose a verified location, reject an invalid value, or defer a decision.</p>
+        <p class="note">The existing public profile-location endpoint is limited to 100 accounts and does not provide a complete review queue. A dedicated authenticated review endpoint and write operations are required before this module can be enabled safely.</p>
+        <div class="actions"><button disabled title="Requires protected review API">Review ambiguous locations — coming next</button></div>
+      </section>
+    </div>
 
     <section class="panel">
       <h2>Authentication diagnostics</h2>
-
-      <p>
-        This log records authentication stages
-        without exposing signatures or challenges.
-      </p>
-
-      <div
-        id="diagnostics"
-        class="diagnostics"
-        aria-live="polite"
-      >Waiting for events...</div>
-
+      <p>This log records authentication and dashboard request stages without exposing signatures or challenges.</p>
+      <div id="diagnostics" class="diagnostics" aria-live="polite">Waiting for events...</div>
       <div class="actions">
-        <button
-          id="copyLogButton"
-          class="secondary"
-        >
-          Copy diagnostic log
-        </button>
-
-        <button
-          id="clearLogButton"
-          class="secondary"
-        >
-          Clear log
-        </button>
+        <button id="copyLogButton" class="secondary">Copy diagnostic log</button>
+        <button id="clearLogButton" class="secondary">Clear log</button>
       </div>
     </section>
   </main>
@@ -215,544 +164,382 @@
     "use strict";
 
     const ADMIN_ACCOUNT = "jocieprosza";
-
     const KEYCHAIN_TIMEOUT_MS = 45000;
     const API_TIMEOUT_MS = 20000;
 
-    const loginButton =
-      document.getElementById("loginButton");
-
-    const logoutButton =
-      document.getElementById("logoutButton");
-
-    const refreshButton =
-      document.getElementById("refreshButton");
-
-    const sessionInfo =
-      document.getElementById("sessionInfo");
-
-    const message =
-      document.getElementById("message");
-
-    const adminPanel =
-      document.getElementById("adminPanel");
-
-    const diagnostics =
-      document.getElementById("diagnostics");
-
-    const copyLogButton =
-      document.getElementById("copyLogButton");
-
-    const clearLogButton =
-      document.getElementById("clearLogButton");
+    const loginButton = document.getElementById("loginButton");
+    const logoutButton = document.getElementById("logoutButton");
+    const refreshButton = document.getElementById("refreshButton");
+    const refreshDataButton = document.getElementById("refreshDataButton");
+    const sessionInfo = document.getElementById("sessionInfo");
+    const message = document.getElementById("message");
+    const adminPanel = document.getElementById("adminPanel");
+    const diagnostics = document.getElementById("diagnostics");
+    const copyLogButton = document.getElementById("copyLogButton");
+    const clearLogButton = document.getElementById("clearLogButton");
+    const dashboardMessage = document.getElementById("dashboardMessage");
+    const dashboardUpdated = document.getElementById("dashboardUpdated");
 
     let busy = false;
+    let loadingDashboard = false;
+    let authenticated = false;
     let logLines = [];
 
     function log(event) {
-      const timestamp = new Date().toISOString();
-
-      const line = `[${timestamp}] ${event}`;
-
+      const line = `[${new Date().toISOString()}] ${event}`;
       logLines.push(line);
-
-      if (logLines.length > 150) {
-        logLines = logLines.slice(-150);
-      }
-
-      diagnostics.textContent =
-        logLines.join("\n");
-
-      diagnostics.scrollTop =
-        diagnostics.scrollHeight;
+      if (logLines.length > 150) logLines = logLines.slice(-150);
+      diagnostics.textContent = logLines.join("\n");
+      diagnostics.scrollTop = diagnostics.scrollHeight;
     }
 
     function setMessage(text, type = "") {
       message.textContent = text;
       message.className = "status";
-
-      if (type) {
-        message.classList.add(type);
-      }
+      if (type) message.classList.add(type);
     }
 
     function setBusy(value) {
       busy = value;
-
       loginButton.disabled = value;
       logoutButton.disabled = value;
       refreshButton.disabled = value;
     }
 
+    function setDashboardBusy(value) {
+      loadingDashboard = value;
+      refreshDataButton.disabled = value;
+    }
+
+    function text(id, value) {
+      document.getElementById(id).textContent =
+        value === null || value === undefined || value === "" ? "—" : String(value);
+    }
+
+    function number(value) {
+      const n = Number(value);
+      return value === null || value === undefined || value === "" || !Number.isFinite(n)
+        ? "—" : n.toLocaleString("en-US");
+    }
+
+    function date(value) {
+      if (!value) return "—";
+      const normalized = typeof value === "string" && /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(value)
+        ? value.replace(" ", "T") + "Z" : value;
+      const d = new Date(normalized);
+      return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString();
+    }
+
+    function badge(id, label, kind = "") {
+      const el = document.getElementById(id);
+      el.textContent = label;
+      el.className = "pill" + (kind ? " " + kind : "");
+    }
+
+    function renderRows(id, rows, fields) {
+      const tbody = document.getElementById(id);
+      tbody.replaceChildren();
+      if (!Array.isArray(rows) || !rows.length) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = fields.length;
+        td.textContent = "No records.";
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+      }
+      for (const item of rows) {
+        const tr = document.createElement("tr");
+        for (const field of fields) {
+          const td = document.createElement("td");
+          td.textContent = item?.[field] == null ? "—" : String(item[field]);
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+    }
+
     async function api(path, options = {}) {
       const controller = new AbortController();
-
-      const timeout = setTimeout(() => {
-        controller.abort();
-      }, API_TIMEOUT_MS);
-
+      const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
       const started = performance.now();
-
-      log(`API request started: ${path}`);
-
+      const requestUrl = new URL(path, location.origin);
+      requestUrl.searchParams.set("_t", String(Date.now()));
+      const safePath = requestUrl.pathname;
+      log(`API request started: ${safePath}`);
       try {
-        const response = await fetch(path, {
+        const response = await fetch(requestUrl.toString(), {
           credentials: "same-origin",
           cache: "no-store",
           ...options,
           signal: controller.signal
         });
-
-        const elapsed = (
-          (performance.now() - started) / 1000
-        ).toFixed(2);
-
-        log(
-          `API response: ${path}, ` +
-          `HTTP ${response.status}, ${elapsed}s`
-        );
-
+        const elapsed = ((performance.now() - started) / 1000).toFixed(2);
+        log(`API response: ${safePath}, HTTP ${response.status}, ${elapsed}s`);
         let data;
-
-        try {
-          data = await response.json();
-        } catch {
-          throw new Error(
-            `Invalid JSON response from ${path}`
-          );
-        }
-
-        if (!response.ok || !data.ok) {
-          throw new Error(
-            data.error ||
-            `HTTP ${response.status}`
-          );
-        }
-
+        try { data = await response.json(); }
+        catch { throw new Error(`Invalid JSON response from ${safePath}`); }
+        if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
         return data;
       } catch (error) {
         if (error.name === "AbortError") {
-          log(`API timeout: ${path}`);
-
-          throw new Error(
-            `API timeout while requesting ${path}`
-          );
+          log(`API timeout: ${safePath}`);
+          throw new Error(`API timeout while requesting ${safePath}`);
         }
-
-        log(
-          `API failure: ${path}: ${error.message}`
-        );
-
+        log(`API failure: ${safePath}: ${error.message}`);
         throw error;
-      } finally {
-        clearTimeout(timeout);
-      }
+      } finally { clearTimeout(timeout); }
+    }
+
+    function renderIndexer(data) {
+      const state = data.indexer_state || "unknown";
+      badge("indexerBadge", state.replaceAll("_", " "),
+        state === "synced" ? "good" : state === "error" || state === "stalled" ? "bad" : "warn");
+      text("censusAccounts", number(data.census_accounts));
+      text("blocksBehind", number(data.blocks_behind));
+      text("lastScannedBlock", number(data.last_scanned_block));
+      text("scheduledBlocks", number(data.scheduled_scan_blocks));
+      text("irreversibleBlock", number(data.last_irreversible_block_num));
+      text("lastScheduledRun", date(data.last_scheduled_run));
+      text("lastSuccessfulScan", date(data.last_successful_scan));
+      text("lastScanCompleted", date(data.last_scan_completed));
+      text("lastScanBlocks", number(data.last_scan_blocks));
+      text("indexerError", data.last_error || "None");
+    }
+
+    function renderProfiles(data) {
+      badge("profileBadge", data.import_complete ? "Import complete" : "Import in progress",
+        data.import_complete ? "good" : "warn");
+      text("accountsScanned", number(data.accounts_scanned));
+      text("accountsWithLocation", number(data.accounts_with_location));
+      text("uniqueLocations", number(data.unique_location_strings));
+      text("pendingLocations", number(data.pending_location_matches));
+      text("lastProfileAccount", data.last_account);
+      text("lastImportRun", date(data.last_import_run));
+      text("accountsPerRun", number(data.accounts_per_scheduled_run));
+      text("profileError", data.last_import_error || "None");
+    }
+
+    function renderClassifier(data) {
+      badge("classifierBadge", data.last_classifier_error ? "Error" : "Available",
+        data.last_classifier_error ? "bad" : "good");
+      text("classifierProcessed", number(data.last_classifier_processed));
+      text("classifierMatched", number(data.last_classifier_matched));
+      text("classifierAmbiguous", number(data.last_classifier_ambiguous));
+      text("classifierRejected", number(data.last_classifier_rejected));
+      text("classifierVersion", data.classifier_version);
+      text("classifierRun", date(data.last_classifier_run));
+      text("classifierError", data.last_classifier_error || "None");
+      renderRows("classifierCounts", data.counts, ["status", "location_type", "count"]);
+    }
+
+    function renderGeocoder(data) {
+      badge("geocoderBadge", !data.configured ? "Not configured" : data.last_geocoder_error ? "Error" : "Configured",
+        !data.configured || data.last_geocoder_error ? "bad" : "good");
+      text("geocoderProcessed", number(data.last_geocoder_processed));
+      text("geocoderMatched", number(data.last_geocoder_matched));
+      text("geocoderErrors", number(data.last_geocoder_errors));
+      text("remainingAmbiguous", number(data.remaining_untried_ambiguous));
+      text("geocoderVersion", data.geocoder_version);
+      text("geocoderRun", date(data.last_geocoder_run));
+      text("geocoderError", data.last_geocoder_error || "None");
+      renderRows("geocoderAttempts", data.attempts, ["outcome", "count"]);
+    }
+
+    async function refreshDashboard() {
+      if (!authenticated || loadingDashboard) return;
+      setDashboardBusy(true);
+      dashboardMessage.textContent = "Loading operational status...";
+      dashboardMessage.className = "status";
+      const endpoints = [
+        ["Indexer", "/api/indexer/status", renderIndexer, "indexerBadge"],
+        ["Profiles", "/api/profiles/status", renderProfiles, "profileBadge"],
+        ["Classifier", "/api/profiles/classifier/status", renderClassifier, "classifierBadge"],
+        ["Geocoder", "/api/profiles/geocoder/status", renderGeocoder, "geocoderBadge"]
+      ];
+      try {
+        const results = await Promise.allSettled(endpoints.map(entry => api(entry[1])));
+        const failures = [];
+        results.forEach((result, index) => {
+          const [name, , render, badgeId] = endpoints[index];
+          if (result.status === "fulfilled") {
+            try { render(result.value); }
+            catch (error) {
+              failures.push(`${name}: rendering failed (${error.message})`);
+              badge(badgeId, "Display error", "bad");
+              log(`Dashboard render failure: ${name}: ${error.message}`);
+            }
+          } else {
+            failures.push(`${name}: ${result.reason.message}`);
+            badge(badgeId, "Unavailable", "bad");
+          }
+        });
+        dashboardUpdated.textContent = `Last refreshed: ${new Date().toLocaleString()}`;
+        if (failures.length) {
+          dashboardMessage.textContent = "Some data could not be loaded:\n" + failures.join("\n");
+          dashboardMessage.className = "status error";
+        } else {
+          dashboardMessage.textContent = "All four operational endpoints responded successfully.";
+          dashboardMessage.className = "status success";
+        }
+      } finally { setDashboardBusy(false); }
     }
 
     async function refreshSession() {
       log("Checking administrator session");
-
-      const session = await api(
-        "/api/admin/session"
-      );
-
-      const authenticated =
-        session.authenticated === true &&
-        session.account === ADMIN_ACCOUNT;
-
+      const session = await api("/api/admin/session");
+      authenticated = session.authenticated === true && session.account === ADMIN_ACCOUNT;
       loginButton.hidden = authenticated;
       logoutButton.hidden = !authenticated;
       adminPanel.hidden = !authenticated;
-
       if (authenticated) {
-        sessionInfo.textContent =
-          `Signed in as @${session.account}`;
-
-        setMessage(
-          `Authenticated. Session expires: ${session.expires_at}`,
-          "success"
-        );
-
+        sessionInfo.textContent = `Signed in as @${session.account}`;
+        setMessage(`Authenticated. Session expires: ${session.expires_at}`, "success");
         log("Administrator session authenticated");
       } else {
-        sessionInfo.textContent =
-          "Not authenticated.";
-
-        setMessage(
-          "Administrator authentication required."
-        );
-
+        sessionInfo.textContent = "Not authenticated.";
+        setMessage("Administrator authentication required.");
         log("No active administrator session");
       }
-
       return authenticated;
     }
 
     function getKeychain() {
       const keychain = window.hive_keychain;
-
-      log(
-        "Hive Keychain object available: " +
-        Boolean(keychain)
-      );
-
-      log(
-        "requestSignBuffer available: " +
-        (
-          typeof keychain?.requestSignBuffer ===
-          "function"
-        )
-      );
-
-      if (
-        !keychain ||
-        typeof keychain.requestSignBuffer !==
-          "function"
-      ) {
-        throw new Error(
-          "Hive Keychain signing interface is " +
-          "not available. Open this page inside " +
-          "Hive Keychain."
-        );
+      log("Hive Keychain object available: " + Boolean(keychain));
+      log("requestSignBuffer available: " + (typeof keychain?.requestSignBuffer === "function"));
+      if (!keychain || typeof keychain.requestSignBuffer !== "function") {
+        throw new Error("Hive Keychain signing interface is not available. Open this page inside Hive Keychain.");
       }
-
       return keychain;
     }
 
-    function signChallenge(
-      keychain,
-      account,
-      text
-    ) {
+    function signChallenge(keychain, account, challengeText) {
       return new Promise((resolve, reject) => {
         let settled = false;
-
         const started = performance.now();
-
-        const timeout = setTimeout(() => {
-          finish(
-            new Error(
-              "Hive Keychain callback timeout " +
-              "after 45 seconds."
-            )
-          );
-        }, KEYCHAIN_TIMEOUT_MS);
-
+        const timeout = setTimeout(() => finish(new Error("Hive Keychain callback timeout after 45 seconds.")), KEYCHAIN_TIMEOUT_MS);
         function finish(error, signature) {
-          if (settled) {
-            return;
-          }
-
+          if (settled) return;
           settled = true;
           clearTimeout(timeout);
-
-          if (error) {
-            reject(error);
-          } else {
-            resolve(signature);
-          }
+          if (error) reject(error); else resolve(signature);
         }
-
-        log(
-          "Calling Keychain requestSignBuffer"
-        );
-
+        log("Calling Keychain requestSignBuffer");
         log(`Signing account: @${account}`);
         log("Key type: Posting");
-        log(`Message length: ${text.length}`);
-
+        log(`Message length: ${challengeText.length}`);
         try {
-          keychain.requestSignBuffer(
-            account,
-            text,
-            "Posting",
-            result => {
-              const elapsed = (
-                (performance.now() - started) / 1000
-              ).toFixed(2);
-
-              log(
-                `Keychain callback received after ${elapsed}s`
-              );
-
-              log(
-                "Keychain success: " +
-                Boolean(result?.success)
-              );
-
-              if (
-                !result ||
-                result.success !== true
-              ) {
-                const errorMessage =
-                  result?.message ||
-                  result?.error ||
-                  "Signature was rejected.";
-
-                log(
-                  "Keychain rejected signing request"
-                );
-
-                finish(
-                  new Error(errorMessage)
-                );
-
-                return;
-              }
-
-              if (
-                typeof result.result !== "string" ||
-                !result.result
-              ) {
-                log(
-                  "Keychain returned no signature"
-                );
-
-                finish(
-                  new Error(
-                    "Keychain returned no signature."
-                  )
-                );
-
-                return;
-              }
-
-              log(
-                "Signature received successfully"
-              );
-
-              log(
-                "Signature length: " +
-                result.result.length
-              );
-
-              finish(null, result.result);
+          keychain.requestSignBuffer(account, challengeText, "Posting", result => {
+            const elapsed = ((performance.now() - started) / 1000).toFixed(2);
+            log(`Keychain callback received after ${elapsed}s`);
+            log("Keychain success: " + Boolean(result?.success));
+            if (!result || result.success !== true) {
+              const errorMessage = result?.message || result?.error || "Signature was rejected.";
+              log("Keychain rejected signing request");
+              finish(new Error(errorMessage));
+              return;
             }
-          );
+            if (typeof result.result !== "string" || !result.result) {
+              log("Keychain returned no signature");
+              finish(new Error("Keychain returned no signature."));
+              return;
+            }
+            log("Signature received successfully");
+            log("Signature length: " + result.result.length);
+            finish(null, result.result);
+          });
         } catch (error) {
-          log(
-            "Keychain invocation exception: " +
-            error.message
-          );
-
+          log("Keychain invocation exception: " + error.message);
           finish(error);
         }
       });
     }
 
     async function login() {
-      if (busy) {
-        return;
-      }
-
+      if (busy) return;
       setBusy(true);
-
       log("=== LOGIN STARTED ===");
-
       try {
         const keychain = getKeychain();
-
-        setMessage(
-          "Requesting one-time authentication challenge..."
-        );
-
+        setMessage("Requesting one-time authentication challenge...");
         log("Requesting authentication challenge");
-
-        const challenge = await api(
-          "/api/admin/challenge",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json"
-            },
-            body: "{}"
-          }
-        );
-
+        const challenge = await api("/api/admin/challenge", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}"
+        });
         log("Authentication challenge received");
-
-        if (
-          challenge.account !== ADMIN_ACCOUNT ||
-          typeof challenge.nonce !== "string" ||
-          typeof challenge.message !== "string"
-        ) {
-          throw new Error(
-            "Invalid administrator challenge."
-          );
+        if (challenge.account !== ADMIN_ACCOUNT || typeof challenge.nonce !== "string" || typeof challenge.message !== "string") {
+          throw new Error("Invalid administrator challenge.");
         }
-
         log("Challenge structure validated");
-
-        setMessage(
-          "Waiting for Hive Keychain signature..."
-        );
-
-        const signature = await signChallenge(
-          keychain,
-          ADMIN_ACCOUNT,
-          challenge.message
-        );
-
+        setMessage("Waiting for Hive Keychain signature...");
+        const signature = await signChallenge(keychain, ADMIN_ACCOUNT, challenge.message);
         log("Proceeding to server verification");
-
-        setMessage(
-          "Verifying signature with Hive blockchain..."
-        );
-
-        await api(
-          "/api/admin/login",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              nonce: challenge.nonce,
-              signature
-            })
-          }
-        );
-
+        setMessage("Verifying signature with Hive blockchain...");
+        await api("/api/admin/login", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ nonce: challenge.nonce, signature })
+        });
         log("Server accepted authentication");
-
-        await refreshSession();
-
+        if (await refreshSession()) await refreshDashboard();
         log("=== LOGIN COMPLETED ===");
       } catch (error) {
-        log(
-          "LOGIN FAILED: " + error.message
-        );
-
-        setMessage(
-          `Login failed: ${error.message}`,
-          "error"
-        );
-      } finally {
-        setBusy(false);
-      }
+        log("LOGIN FAILED: " + error.message);
+        setMessage(`Login failed: ${error.message}`, "error");
+      } finally { setBusy(false); }
     }
 
     async function logout() {
-      if (busy) {
-        return;
-      }
-
+      if (busy) return;
       setBusy(true);
-
       log("Logout requested");
-
       try {
-        await api(
-          "/api/admin/logout",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json"
-            },
-            body: "{}"
-          }
-        );
-
+        await api("/api/admin/logout", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}"
+        });
         await refreshSession();
-
         log("Logout completed");
       } catch (error) {
-        log(
-          "Logout failed: " + error.message
-        );
-
-        setMessage(
-          `Logout failed: ${error.message}`,
-          "error"
-        );
-      } finally {
-        setBusy(false);
-      }
+        log("Logout failed: " + error.message);
+        setMessage(`Logout failed: ${error.message}`, "error");
+      } finally { setBusy(false); }
     }
 
-    loginButton.addEventListener(
-      "click",
-      login
-    );
-
-    logoutButton.addEventListener(
-      "click",
-      logout
-    );
-
-    refreshButton.addEventListener(
-      "click",
-      async () => {
-        if (busy) {
-          return;
-        }
-
-        setBusy(true);
-
-        try {
-          await refreshSession();
-        } catch (error) {
-          log(
-            "Session refresh failed: " +
-            error.message
-          );
-
-          setMessage(
-            `Session check failed: ${error.message}`,
-            "error"
-          );
-        } finally {
-          setBusy(false);
-        }
+    loginButton.addEventListener("click", login);
+    logoutButton.addEventListener("click", logout);
+    refreshDataButton.addEventListener("click", refreshDashboard);
+    refreshButton.addEventListener("click", async () => {
+      if (busy) return;
+      setBusy(true);
+      try {
+        if (await refreshSession()) await refreshDashboard();
+      } catch (error) {
+        log("Session refresh failed: " + error.message);
+        setMessage(`Session check failed: ${error.message}`, "error");
+      } finally { setBusy(false); }
+    });
+    copyLogButton.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(logLines.join("\n"));
+        setMessage("Diagnostic log copied.", "success");
+      } catch {
+        setMessage("Could not copy log. Select the diagnostic text manually.", "error");
       }
-    );
-
-    copyLogButton.addEventListener(
-      "click",
-      async () => {
-        const text = logLines.join("\n");
-
-        try {
-          await navigator.clipboard.writeText(text);
-
-          setMessage(
-            "Diagnostic log copied.",
-            "success"
-          );
-        } catch {
-          setMessage(
-            "Could not copy log. Select the " +
-            "diagnostic text manually.",
-            "error"
-          );
-        }
-      }
-    );
-
-    clearLogButton.addEventListener(
-      "click",
-      () => {
-        logLines = [];
-        diagnostics.textContent =
-          "Diagnostic log cleared.";
-      }
-    );
+    });
+    clearLogButton.addEventListener("click", () => {
+      logLines = [];
+      diagnostics.textContent = "Diagnostic log cleared.";
+    });
 
     log("Administration page initialized");
-
-    refreshSession().catch(error => {
-      sessionInfo.textContent =
-        "Unable to check session.";
-
-      log(
-        "Initial session check failed: " +
-        error.message
-      );
-
-      setMessage(
-        error.message,
-        "error"
-      );
+    refreshSession().then(isAuthenticated => {
+      if (isAuthenticated) return refreshDashboard();
+    }).catch(error => {
+      sessionInfo.textContent = "Unable to check session.";
+      adminPanel.hidden = true;
+      authenticated = false;
+      log("Initial session check failed: " + error.message);
+      setMessage(error.message, "error");
     });
   </script>
 </body>
