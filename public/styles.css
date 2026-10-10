@@ -834,4 +834,65 @@ footer{
     font-size:10px
   }
 
+/* MOBILE HEADER FIX */
+
+@media (max-width: 850px) {
+  .topbar {
+    height: auto;
+    min-height: 68px;
+    padding: 10px 17px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .brand {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .header-actions {
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  .mobile-profile-link {
+    display: none;
+  }
+
+  .topbar .header-actions .btn {
+    font-size: 12px;
+    padding: 10px 12px;
+  }
+
+  .topbar nav {
+    display: flex;
+    order: 3;
+    flex: 0 0 100%;
+    justify-content: center;
+    gap: 8px;
+    margin: 0;
+    padding-top: 10px;
+    border-top: 1px solid var(--line);
+  }
+
+  .topbar nav a {
+    display: none;
+  }
+
+  .topbar nav a[href="/#map"],
+  .topbar nav a[href="/profiles/"] {
+    display: inline-flex;
+    justify-content: center;
+    padding: 8px 14px;
+    border: 1px solid #343c47;
+    border-radius: 8px;
+    background: #181d24;
+    color: white;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+}
+
+  
 } 
