@@ -1,0 +1,16 @@
+
+{
+  "name": "hive-census",
+  "version": "0.9.5",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@noble/curves": "1.9.7"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
