@@ -1,0 +1,489 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Hive Census — Administration</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #101827;
+      color: #edf2f7;
+      padding: 24px 16px;
+    }
+
+    main {
+      max-width: 640px;
+      margin: 48px auto;
+    }
+
+    h1 {
+      font-size: 1.7rem;
+      margin-bottom: 8px;
+    }
+
+    p {
+      line-height: 1.6;
+      color: #b8c5d6;
+    }
+
+    .panel {
+      margin-top: 24px;
+      padding: 24px;
+      background: #1c293b;
+      border: 1px solid #34465e;
+      border-radius: 14px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 12px 18px;
+      background: #e44d51;
+      color: white;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: .5;
+      cursor: wait;
+    }
+
+    button.secondary {
+      background: #40536b;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .status {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      padding: 14px;
+      margin-top: 20px;
+      border-radius: 8px;
+      background: #111c2b;
+      color: #cdd8e5;
+      font-size: .9rem;
+    }
+
+    .error {
+      color: #ff9c9c;
+    }
+
+    .success {
+      color: #9ce6ba;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Hive Census Administration</h1>
+    <p>
+      Administrator authentication using Hive Keychain.
+      Authorized account: <strong>@jocieprosza</strong>.
+    </p>
+
+    <section class="panel">
+      <h2>Administrator session</h2>
+
+      <p id="sessionInfo">
+        Checking session...
+      </p>
+
+      <div class="actions">
+        <button id="loginButton" hidden>
+          Sign in with Hive Keychain
+        </button>
+
+        <button
+          id="logoutButton"
+          class="secondary"
+          hidden
+        >
+          Sign out
+        </button>
+
+        <button
+          id="refreshButton"
+          class="secondary"
+        >
+          Refresh session
+        </button>
+      </div>
+
+      <div
+        id="message"
+        class="status"
+        role="status"
+        aria-live="polite"
+      >
+        Initializing...
+      </div>
+    </section>
+
+    <section
+      id="adminPanel"
+      class="panel"
+      hidden
+    >
+      <h2>Administration</h2>
+      <p>
+        Authentication successful. Administrative
+        tools will be added in the next stage.
+      </p>
+    </section>
+  </main>
+
+  <script>
+    "use strict";
+
+    const ADMIN_ACCOUNT = "jocieprosza";
+
+    const loginButton =
+      document.getElementById("loginButton");
+
+    const logoutButton =
+      document.getElementById("logoutButton");
+
+    const refreshButton =
+      document.getElementById("refreshButton");
+
+    const sessionInfo =
+      document.getElementById("sessionInfo");
+
+    const message =
+      document.getElementById("message");
+
+    const adminPanel =
+      document.getElementById("adminPanel");
+
+    let busy = false;
+
+    function setMessage(text, type = "") {
+      message.textContent = text;
+      message.className = "status";
+
+      if (type) {
+        message.classList.add(type);
+      }
+    }
+
+    function setBusy(value) {
+      busy = value;
+
+      loginButton.disabled = value;
+      logoutButton.disabled = value;
+      refreshButton.disabled = value;
+    }
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        credentials: "same-origin",
+        cache: "no-store",
+        ...options
+      });
+
+      let data;
+
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error(
+          "Server returned an invalid JSON response."
+        );
+      }
+
+      if (!response.ok || !data.ok) {
+        throw new Error(
+          data.error ||
+          `HTTP ${response.status}`
+        );
+      }
+
+      return data;
+    }
+
+    async function refreshSession() {
+      const session = await api(
+        "/api/admin/session"
+      );
+
+      const authenticated =
+        session.authenticated === true &&
+        session.account === ADMIN_ACCOUNT;
+
+      loginButton.hidden = authenticated;
+      logoutButton.hidden = !authenticated;
+      adminPanel.hidden = !authenticated;
+
+      if (authenticated) {
+        sessionInfo.textContent =
+          `Signed in as @${session.account}`;
+
+        setMessage(
+          `Authenticated. Session expires: ${session.expires_at}`,
+          "success"
+        );
+      } else {
+        sessionInfo.textContent =
+          "Not authenticated.";
+
+        setMessage(
+          "Administrator authentication required."
+        );
+      }
+
+      return authenticated;
+    }
+
+    function getKeychain() {
+      const keychain = window.hive_keychain;
+
+      if (
+        !keychain ||
+        typeof keychain.requestSignBuffer !==
+          "function"
+      ) {
+        throw new Error(
+          "Hive Keychain signing interface is not available " +
+          "in this browser. Open this page inside Hive Keychain."
+        );
+      }
+
+      return keychain;
+    }
+
+    function signChallenge(
+      keychain,
+      account,
+      text
+    ) {
+      return new Promise((resolve, reject) => {
+        let settled = false;
+
+        function finish(error, signature) {
+          if (settled) {
+            return;
+          }
+
+          settled = true;
+
+          if (error) {
+            reject(error);
+          } else {
+            resolve(signature);
+          }
+        }
+
+        try {
+          keychain.requestSignBuffer(
+            account,
+            text,
+            "Posting",
+            result => {
+              if (
+                !result ||
+                result.success !== true
+              ) {
+                finish(
+                  new Error(
+                    result?.message ||
+                    result?.error ||
+                    "Signature was rejected."
+                  )
+                );
+                return;
+              }
+
+              if (
+                typeof result.result !== "string" ||
+                !result.result
+              ) {
+                finish(
+                  new Error(
+                    "Keychain returned no signature."
+                  )
+                );
+                return;
+              }
+
+              finish(null, result.result);
+            }
+          );
+        } catch (error) {
+          finish(error);
+        }
+      });
+    }
+
+    async function login() {
+      if (busy) {
+        return;
+      }
+
+      setBusy(true);
+
+      try {
+        const keychain = getKeychain();
+
+        setMessage(
+          "Requesting one-time authentication challenge..."
+        );
+
+        const challenge = await api(
+          "/api/admin/challenge",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: "{}"
+          }
+        );
+
+        if (
+          challenge.account !== ADMIN_ACCOUNT ||
+          typeof challenge.nonce !== "string" ||
+          typeof challenge.message !== "string"
+        ) {
+          throw new Error(
+            "Invalid administrator challenge."
+          );
+        }
+
+        setMessage(
+          "Waiting for Hive Keychain signature..."
+        );
+
+        const signature = await signChallenge(
+          keychain,
+          ADMIN_ACCOUNT,
+          challenge.message
+        );
+
+        setMessage(
+          "Verifying signature with Hive blockchain..."
+        );
+
+        await api(
+          "/api/admin/login",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              nonce: challenge.nonce,
+              signature
+            })
+          }
+        );
+
+        await refreshSession();
+      } catch (error) {
+        setMessage(
+          `Login failed: ${error.message}`,
+          "error"
+        );
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function logout() {
+      if (busy) {
+        return;
+      }
+
+      setBusy(true);
+
+      try {
+        await api(
+          "/api/admin/logout",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: "{}"
+          }
+        );
+
+        await refreshSession();
+      } catch (error) {
+        setMessage(
+          `Logout failed: ${error.message}`,
+          "error"
+        );
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    loginButton.addEventListener(
+      "click",
+      login
+    );
+
+    logoutButton.addEventListener(
+      "click",
+      logout
+    );
+
+    refreshButton.addEventListener(
+      "click",
+      async () => {
+        if (busy) {
+          return;
+        }
+
+        setBusy(true);
+
+        try {
+          await refreshSession();
+        } catch (error) {
+          setMessage(
+            `Session check failed: ${error.message}`,
+            "error"
+          );
+        } finally {
+          setBusy(false);
+        }
+      }
+    );
+
+    refreshSession().catch(error => {
+      sessionInfo.textContent =
+        "Unable to check session.";
+
+      setMessage(
+        error.message,
+        "error"
+      );
+    });
+  </script>
+</body>
+</html>
