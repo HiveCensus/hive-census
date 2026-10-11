@@ -2,20 +2,25 @@
 /*
  * Hive Census — Administrator API
  *
- * Location Review v0.2.1
+ * Version 0.2.2
  *
- * - Hive Keychain authentication
- * - D1-backed administrator sessions
- * - Authenticated ambiguous-location review
+ * Authentication:
+ * - Hive Keychain posting signature
+ * - One-time D1 challenges
+ * - Hive blockchain authority verification
+ * - HttpOnly session cookies
+ *
+ * Location Review:
+ * - Authenticated ambiguous-location queue
  * - Manual match / reject
  * - Atomic D1 updates
- * - Account overrides preserved
- * - Authenticated diagnostic error responses
+ * - Individual account overrides preserved
+ * - Manual review audit fields
+ * - NOT NULL-safe rejection
  */
 
 import {
   ADMIN_ACCOUNT,
-  ADMIN_SESSION_TTL_MS,
   createAdminChallenge,
   validateAdminChallenge,
   verifyAdminSignature,
@@ -40,6 +45,10 @@ const SECURITY_HEADERS = {
   "Referrer-Policy": "no-referrer"
 };
 
+// ============================================================
+// RESPONSE HELPERS
+// ============================================================
+
 function respond(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
@@ -57,10 +66,16 @@ function failure(message, status = 400) {
   }, status);
 }
 
+// ============================================================
+// REQUEST VALIDATION
+// ============================================================
+
 function requestIsSameOrigin(request) {
   const origin = request.headers.get("Origin");
 
-  if (!origin) return false;
+  if (!origin) {
+    return false;
+  }
 
   try {
     const requestUrl = new URL(request.url);
@@ -83,7 +98,11 @@ function validateMutationRequest(request) {
   const contentType =
     request.headers.get("Content-Type") || "";
 
-  if (!/^application\/json(?:\s*;|$)/i.test(contentType)) {
+  if (
+    !/^application\/json(?:\s*;|$)/i.test(
+      contentType
+    )
+  ) {
     return failure(
       "Content-Type must be application/json",
       415
@@ -129,6 +148,10 @@ async function readJsonBody(request) {
 
   return data;
 }
+
+// ============================================================
+// HIVE RPC
+// ============================================================
 
 async function hiveRpc(method, params) {
   const response = await fetch(HIVE_RPC, {
@@ -179,12 +202,19 @@ async function fetchAdminAccount() {
   return accounts[0];
 }
 
+// ============================================================
+// AUTHENTICATION CHALLENGE
+// ============================================================
+
 async function createChallenge(env) {
   const challenge = createAdminChallenge();
 
   await env.DB.prepare(`
     INSERT INTO admin_auth_challenges (
-      nonce, account, message, expires_at
+      nonce,
+      account,
+      message,
+      expires_at
     )
     VALUES (?, ?, ?, ?)
   `).bind(
@@ -202,6 +232,10 @@ async function createChallenge(env) {
     expires_at: challenge.expires_at
   });
 }
+
+// ============================================================
+// LOGIN
+// ============================================================
 
 async function login(request, env) {
   let body;
@@ -227,8 +261,11 @@ async function login(request, env) {
 
   const stored = await env.DB.prepare(`
     SELECT
-      nonce, account, message,
-      expires_at, consumed_at
+      nonce,
+      account,
+      message,
+      expires_at,
+      consumed_at
     FROM admin_auth_challenges
     WHERE nonce = ?
   `).bind(nonce).first();
@@ -277,7 +314,10 @@ async function login(request, env) {
       AND consumed_at IS NULL
       AND julianday(expires_at) >
           julianday('now')
-  `).bind(nonce, ADMIN_ACCOUNT).run();
+  `).bind(
+    nonce,
+    ADMIN_ACCOUNT
+  ).run();
 
   if (
     Number(consumed.meta?.changes || 0) !== 1
@@ -289,6 +329,7 @@ async function login(request, env) {
   }
 
   const token = createAdminSessionToken();
+
   const tokenHash =
     await hashAdminSessionToken(token);
 
@@ -296,7 +337,9 @@ async function login(request, env) {
 
   await env.DB.prepare(`
     INSERT INTO admin_sessions (
-      token_hash, account, expires_at
+      token_hash,
+      account,
+      expires_at
     )
     VALUES (?, ?, ?)
   `).bind(
@@ -316,16 +359,25 @@ async function login(request, env) {
   });
 }
 
+// ============================================================
+// SESSION
+// ============================================================
+
 export async function getAdminSession(request, env) {
   const token = readAdminSessionCookie(request);
 
-  if (!token) return null;
+  if (!token) {
+    return null;
+  }
 
   const tokenHash =
     await hashAdminSessionToken(token);
 
   const session = await env.DB.prepare(`
-    SELECT account, created_at, expires_at
+    SELECT
+      account,
+      created_at,
+      expires_at
     FROM admin_sessions
     WHERE token_hash = ?
       AND account = ?
@@ -337,7 +389,9 @@ export async function getAdminSession(request, env) {
     ADMIN_ACCOUNT
   ).first();
 
-  if (!session) return null;
+  if (!session) {
+    return null;
+  }
 
   return {
     account: session.account,
@@ -392,8 +446,35 @@ async function logout(request, env) {
   });
 }
 
+export async function requireAdminSession(
+  request,
+  env
+) {
+  const session = await getAdminSession(
+    request,
+    env
+  );
+
+  if (!session) {
+    return {
+      authorized: false,
+      session: null,
+      response: failure(
+        "Administrator authentication required",
+        401
+      )
+    };
+  }
+
+  return {
+    authorized: true,
+    session,
+    response: null
+  };
+}
+
 // ============================================================
-// LOCATION REVIEW
+// LOCATION REVIEW — LIST
 // ============================================================
 
 async function listAmbiguousLocations(request, env) {
@@ -465,7 +546,7 @@ async function listAmbiguousLocations(request, env) {
 
   return respond({
     ok: true,
-    version: "0.2.1",
+    version: "0.2.2",
     account: ADMIN_ACCOUNT,
     total,
     limit,
@@ -476,6 +557,10 @@ async function listAmbiguousLocations(request, env) {
     locations: result.results
   });
 }
+
+// ============================================================
+// LOCATION REVIEW — VALIDATION
+// ============================================================
 
 function validOptionalString(value, maxLength) {
   return (
@@ -489,11 +574,15 @@ function validOptionalString(value, maxLength) {
 }
 
 function cleanOptionalString(value) {
-  if (value === null || value === undefined) {
+  if (
+    value === null ||
+    value === undefined
+  ) {
     return null;
   }
 
   const trimmed = value.trim();
+
   return trimmed || null;
 }
 
@@ -517,8 +606,11 @@ function validateResolution(body) {
   }
 
   if (
-    !["locality", "region_proxy", "country_proxy"]
-      .includes(body.location_type)
+    ![
+      "locality",
+      "region_proxy",
+      "country_proxy"
+    ].includes(body.location_type)
   ) {
     return "Invalid location type";
   }
@@ -586,177 +678,170 @@ function validateResolution(body) {
   return null;
 }
 
-function diagnosticFailure(error, stage, requestId) {
-  console.error(
-    "[Admin API] Location resolution failed",
-    {
-      stage,
-      requestId,
-      error
-    }
-  );
+// ============================================================
+// LOCATION REVIEW — RESOLUTION
+// ============================================================
 
-  const message =
-    error instanceof Error
-      ? error.message
-      : String(error);
-
-  return respond({
-    ok: false,
-    error: "Administrator service temporarily unavailable",
-    diagnostic: {
-      version: "0.2.1",
-      request_id: requestId,
-      stage,
-      name: error?.name || "UnknownError",
-      message: message.slice(0, 1000)
-    }
-  }, 503);
-}
-
-async function resolveAmbiguousLocation(request, env) {
-  let stage = "read_body";
-  const requestId = crypto.randomUUID();
+async function resolveAmbiguousLocation(
+  request,
+  env,
+  administrator
+) {
+  let body;
 
   try {
-    let body;
+    body = await readJsonBody(request);
+  } catch {
+    return failure("Invalid request body");
+  }
 
-    try {
-      body = await readJsonBody(request);
-    } catch {
-      return failure("Invalid request body");
-    }
+  const validationError = validateResolution(body);
 
-    stage = "validate_body";
+  if (validationError) {
+    return failure(validationError, 400);
+  }
 
-    const validationError = validateResolution(body);
-
-    if (validationError) {
-      return failure(validationError, 400);
-    }
-
-    stage = "load_location";
-
-    const existing = await env.DB.prepare(`
-      SELECT id, original_example, status
-      FROM location_matches
-      WHERE id = ?
-    `).bind(body.id).first();
-
-    if (!existing) {
-      return failure("Location not found", 404);
-    }
-
-    if (existing.status !== "ambiguous") {
-      return failure(
-        "Location has already been resolved",
-        409
-      );
-    }
-
-    const isMatch = body.action === "match";
-    const status = isMatch ? "matched" : "rejected";
-
-    stage = "prepare_update";
-
-    const update = env.DB.prepare(`
-      UPDATE location_matches
-      SET
-        status = ?,
-        location_type = ?,
-        country = ?,
-        country_name = ?,
-        region = ?,
-        region_name = ?,
-        city = ?,
-        lat = ?,
-        lon = ?,
-        confidence = ?,
-        source = 'admin_manual',
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-        AND status = 'ambiguous'
-    `).bind(
+  const existing = await env.DB.prepare(`
+    SELECT
+      id,
+      original_example,
       status,
-      isMatch ? body.location_type : null,
-      isMatch ? body.country : null,
-      isMatch ? body.country_name.trim() : null,
-      isMatch ? cleanOptionalString(body.region) : null,
-      isMatch ? cleanOptionalString(body.region_name) : null,
-      isMatch ? cleanOptionalString(body.city) : null,
-      isMatch ? body.lat : null,
-      isMatch ? body.lon : null,
-      isMatch ? 1 : null,
-      body.id
-    );
+      location_type
+    FROM location_matches
+    WHERE id = ?
+  `).bind(body.id).first();
 
-    stage = "prepare_profile_sync";
+  if (!existing) {
+    return failure("Location not found", 404);
+  }
 
-    const sync = env.DB.prepare(`
-      UPDATE profile_locations
-      SET match_status = ?
-      WHERE match_id = ?
-        AND (
-          match_status IS NULL
-          OR match_status != ?
-        )
-        AND EXISTS (
-          SELECT 1
-          FROM location_matches
-          WHERE id = ?
-            AND status = ?
-            AND source = 'admin_manual'
-        )
-        AND NOT EXISTS (
-          SELECT 1
-          FROM profile_location_overrides o
-          WHERE o.account = profile_locations.account
-        )
-    `).bind(
-      status,
-      body.id,
-      status,
-      body.id,
-      status
-    );
-
-    stage = "execute_d1_batch";
-
-    const results = await env.DB.batch([
-      update,
-      sync
-    ]);
-
-    stage = "verify_update";
-
-    const changes = Number(
-      results[0]?.meta?.changes || 0
-    );
-
-    if (changes !== 1) {
-      return failure(
-        "Location was modified concurrently; refresh the queue",
-        409
-      );
-    }
-
-    return respond({
-      ok: true,
-      id: body.id,
-      original_example: existing.original_example,
-      status,
-      source: "admin_manual",
-      affected_profiles: Number(
-        results[1]?.meta?.changes || 0
-      )
-    });
-  } catch (error) {
-    return diagnosticFailure(
-      error,
-      stage,
-      requestId
+  if (existing.status !== "ambiguous") {
+    return failure(
+      "Location has already been resolved",
+      409
     );
   }
+
+  const isMatch = body.action === "match";
+
+  const status = isMatch
+    ? "matched"
+    : "rejected";
+
+  /*
+   * The location_type column is NOT NULL.
+   *
+   * When rejecting a location, preserve its
+   * existing type instead of writing NULL.
+   *
+   * For matched locations, use the manually
+   * selected geographical type.
+   */
+  const locationType = isMatch
+    ? body.location_type
+    : existing.location_type;
+
+  /*
+   * Both statements execute in one D1 batch.
+   *
+   * The second statement synchronizes profiles
+   * only after the first statement establishes
+   * the manual resolution.
+   *
+   * Account-specific overrides are excluded.
+   */
+
+  const update = env.DB.prepare(`
+    UPDATE location_matches
+    SET
+      status = ?,
+      location_type = ?,
+      country = ?,
+      country_name = ?,
+      region = ?,
+      region_name = ?,
+      city = ?,
+      lat = ?,
+      lon = ?,
+      confidence = ?,
+      source = 'admin_manual',
+      reviewed_by = ?,
+      reviewed_at = CURRENT_TIMESTAMP,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+      AND status = 'ambiguous'
+  `).bind(
+    status,
+    locationType,
+    isMatch ? body.country : null,
+    isMatch ? body.country_name.trim() : null,
+    isMatch ? cleanOptionalString(body.region) : null,
+    isMatch ? cleanOptionalString(body.region_name) : null,
+    isMatch ? cleanOptionalString(body.city) : null,
+    isMatch ? body.lat : null,
+    isMatch ? body.lon : null,
+    isMatch ? 1 : null,
+    administrator,
+    body.id
+  );
+
+  const sync = env.DB.prepare(`
+    UPDATE profile_locations
+    SET match_status = ?
+    WHERE match_id = ?
+      AND (
+        match_status IS NULL
+        OR match_status != ?
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM location_matches
+        WHERE id = ?
+          AND status = ?
+          AND source = 'admin_manual'
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM profile_location_overrides o
+        WHERE o.account = profile_locations.account
+      )
+  `).bind(
+    status,
+    body.id,
+    status,
+    body.id,
+    status
+  );
+
+  const results = await env.DB.batch([
+    update,
+    sync
+  ]);
+
+  const changes = Number(
+    results[0]?.meta?.changes || 0
+  );
+
+  if (changes !== 1) {
+    return failure(
+      "Location was modified concurrently; refresh the queue",
+      409
+    );
+  }
+
+  return respond({
+    ok: true,
+    version: "0.2.2",
+    id: body.id,
+    original_example: existing.original_example,
+    status,
+    location_type: locationType,
+    source: "admin_manual",
+    reviewed_by: administrator,
+    affected_profiles: Number(
+      results[1]?.meta?.changes || 0
+    )
+  });
 }
 
 // ============================================================
@@ -813,7 +898,9 @@ export async function handleAdminApi(request, env) {
     const validation =
       validateMutationRequest(request);
 
-    if (validation) return validation;
+    if (validation) {
+      return validation;
+    }
   }
 
   try {
@@ -858,7 +945,8 @@ export async function handleAdminApi(request, env) {
 
         return await resolveAmbiguousLocation(
           request,
-          env
+          env,
+          auth.session.account
         );
       }
 
@@ -871,7 +959,11 @@ export async function handleAdminApi(request, env) {
   } catch (error) {
     console.error(
       "[Admin API] Request failed:",
-      error
+      {
+        path,
+        method,
+        error
+      }
     );
 
     return failure(
@@ -879,31 +971,4 @@ export async function handleAdminApi(request, env) {
       503
     );
   }
-}
-
-export async function requireAdminSession(
-  request,
-  env
-) {
-  const session = await getAdminSession(
-    request,
-    env
-  );
-
-  if (!session) {
-    return {
-      authorized: false,
-      session: null,
-      response: failure(
-        "Administrator authentication required",
-        401
-      )
-    };
-  }
-
-  return {
-    authorized: true,
-    session,
-    response: null
-  };
 }
