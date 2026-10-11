@@ -18,10 +18,7 @@ body {
   background: #101827;
   color: #edf2f7;
 }
-main {
-  max-width: 1050px;
-  margin: 16px auto 50px;
-}
+main { max-width: 1050px; margin: 16px auto 50px; }
 h1 { font-size: 1.6rem; }
 h2 { font-size: 1.2rem; margin-top: 0; }
 h3 { font-size: 1rem; }
@@ -51,10 +48,7 @@ button {
 }
 button.secondary { background: #40536b; }
 button.green { background: #287f60; }
-button:disabled {
-  opacity: .5;
-  cursor: not-allowed;
-}
+button:disabled { opacity: .5; cursor: not-allowed; }
 input, select {
   width: 100%;
   padding: 11px;
@@ -88,10 +82,7 @@ label {
   border-radius: 9px;
   padding: 13px;
 }
-.metric-label {
-  color: #aebfd2;
-  font-size: .8rem;
-}
+.metric-label { color: #aebfd2; font-size: .8rem; }
 .metric-value {
   margin-top: 6px;
   font-size: 1.2rem;
@@ -187,11 +178,20 @@ th, td {
 }
 .muted { color: #aebfd2; }
 .small { font-size: .82rem; }
+.search-tools {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  margin-top: 16px;
+}
+.search-tools > div { flex: 1; min-width: 0; }
+.search-tools button { flex-shrink: 0; }
 [hidden] { display: none !important; }
 @media(max-width:550px) {
   .form-grid { grid-template-columns: 1fr; }
   .details { grid-template-columns: 1fr; gap: 4px; }
   dd { margin-bottom: 8px; }
+  .search-tools { flex-wrap: wrap; }
 }
 </style>
 </head>
@@ -199,28 +199,17 @@ th, td {
 <main>
 
 <h1>Hive Census Administration</h1>
-<p>
-  Authorized administrator:
-  <strong>@jocieprosza</strong>
-</p>
+<p>Authorized administrator: <strong>@jocieprosza</strong></p>
 
 <section class="panel">
   <h2>Administrator session</h2>
   <p id="sessionInfo">Checking session...</p>
   <div class="actions">
-    <button id="loginButton" hidden>
-      Sign in with Hive Keychain
-    </button>
-    <button id="logoutButton" class="secondary" hidden>
-      Sign out
-    </button>
-    <button id="refreshButton" class="secondary">
-      Refresh session
-    </button>
+    <button id="loginButton" hidden>Sign in with Hive Keychain</button>
+    <button id="logoutButton" class="secondary" hidden>Sign out</button>
+    <button id="refreshButton" class="secondary">Refresh session</button>
   </div>
-  <div id="message" class="status" role="status">
-    Initializing...
-  </div>
+  <div id="message" class="status" role="status">Initializing...</div>
 </section>
 
 <div id="adminPanel" hidden>
@@ -228,13 +217,9 @@ th, td {
 <section class="panel">
   <div class="heading">
     <h2>System dashboard</h2>
-    <button id="refreshDataButton" class="secondary">
-      Refresh data
-    </button>
+    <button id="refreshDataButton" class="secondary">Refresh data</button>
   </div>
-  <div id="dashboardMessage" class="status">
-    Waiting for data...
-  </div>
+  <div id="dashboardMessage" class="status">Waiting for data...</div>
   <p id="dashboardUpdated"></p>
 </section>
 
@@ -383,27 +368,50 @@ th, td {
 <section class="panel" id="reviewPanel">
   <div class="heading">
     <h2>Location Review</h2>
-    <span class="pill warn" id="reviewCountBadge">
-      Loading...
-    </span>
+    <span class="pill warn" id="reviewCountBadge">Loading...</span>
   </div>
 
   <p>
-    Manually resolve ambiguous locations.
-    Decisions apply to the shared location key,
-    while individual account overrides are preserved.
+    Search and resolve ambiguous locations across the database.
+    Manual decisions apply to the shared location key.
+    Account-specific overrides are preserved.
   </p>
 
   <div class="metrics">
     <div class="metric">
-      <div class="metric-label">Ambiguous locations</div>
+      <div class="metric-label">Matching locations</div>
       <div class="metric-value" id="reviewTotal">—</div>
     </div>
     <div class="metric">
       <div class="metric-label">Current page</div>
       <div class="metric-value" id="reviewPageNumber">—</div>
     </div>
+    <div class="metric">
+      <div class="metric-label">Administrator API</div>
+      <div class="metric-value" id="adminApiVersion">—</div>
+    </div>
   </div>
+
+  <div class="search-tools">
+    <div>
+      <label for="reviewSearch">Search all ambiguous locations</label>
+      <input
+        id="reviewSearch"
+        type="search"
+        placeholder="Enter city, region or location text..."
+        maxlength="150"
+        autocomplete="off"
+      >
+    </div>
+    <button id="clearSearchButton" class="secondary" type="button">
+      Clear
+    </button>
+  </div>
+
+  <p class="small muted">
+    Search runs against the database after you stop typing.
+    Results are paginated in groups of 20.
+  </p>
 
   <div class="actions">
     <button id="loadReviewButton" class="secondary">
@@ -411,33 +419,15 @@ th, td {
     </button>
   </div>
 
-  <div id="reviewStatus" class="status">
+  <div id="reviewStatus" class="status" role="status" aria-live="polite">
     Waiting for review queue...
   </div>
 
-  <div style="margin-top:16px">
-    <label for="reviewSearch">
-      Filter locations on this page
-    </label>
-    <input
-      id="reviewSearch"
-      type="search"
-      placeholder="Search location text..."
-    >
-  </div>
-
-  <div
-    id="locationList"
-    class="location-list"
-  ></div>
+  <div id="locationList" class="location-list"></div>
 
   <div class="actions">
-    <button id="previousPage" class="secondary">
-      Previous
-    </button>
-    <button id="nextPage" class="secondary">
-      Next
-    </button>
+    <button id="previousPage" class="secondary">Previous</button>
+    <button id="nextPage" class="secondary">Next</button>
   </div>
 
   <p class="small muted" id="reviewPagination"></p>
@@ -471,118 +461,56 @@ th, td {
           <label for="locationType">Location type</label>
           <select id="locationType">
             <option value="locality">Locality (city/town)</option>
-            <option value="region_proxy">
-              Region — representative city
-            </option>
-            <option value="country_proxy">
-              Country — representative city
-            </option>
+            <option value="region_proxy">Region — representative city</option>
+            <option value="country_proxy">Country — representative city</option>
           </select>
         </div>
-
         <div>
           <label for="countryCode">Country code (ISO 2)</label>
-          <input
-            id="countryCode"
-            maxlength="2"
-            placeholder="PL"
-            autocomplete="off"
-          >
+          <input id="countryCode" maxlength="2" placeholder="PL" autocomplete="off">
         </div>
-
         <div>
           <label for="countryName">Country name</label>
-          <input
-            id="countryName"
-            maxlength="150"
-            placeholder="Poland"
-          >
+          <input id="countryName" maxlength="150" placeholder="Poland">
         </div>
-
         <div>
           <label for="regionCode">Region code (optional)</label>
-          <input
-            id="regionCode"
-            maxlength="50"
-            placeholder="PL-24"
-          >
+          <input id="regionCode" maxlength="50" placeholder="PL-24">
         </div>
-
         <div>
           <label for="regionName">Region name</label>
-          <input
-            id="regionName"
-            maxlength="150"
-            placeholder="Silesian Voivodeship"
-          >
+          <input id="regionName" maxlength="150" placeholder="Silesian Voivodeship">
         </div>
-
         <div class="full">
-          <label for="cityName">
-            City / representative city
-          </label>
-          <input
-            id="cityName"
-            maxlength="150"
-            placeholder="Katowice"
-          >
+          <label for="cityName">City / representative city</label>
+          <input id="cityName" maxlength="150" placeholder="Katowice">
         </div>
-
         <div>
           <label for="latitude">Latitude</label>
-          <input
-            id="latitude"
-            type="number"
-            step="any"
-            min="-90"
-            max="90"
-            placeholder="50.2599"
-          >
+          <input id="latitude" type="number" step="any" min="-90" max="90" placeholder="50.2599">
         </div>
-
         <div>
           <label for="longitude">Longitude</label>
-          <input
-            id="longitude"
-            type="number"
-            step="any"
-            min="-180"
-            max="180"
-            placeholder="19.0216"
-          >
+          <input id="longitude" type="number" step="any" min="-180" max="180" placeholder="19.0216">
         </div>
       </div>
       <p class="small">
-        Coordinates must be verified before saving.
-        For a region or country, use an explicitly
-        selected representative city.
+        Verify coordinates before saving. For a region or country,
+        use an explicitly selected representative city.
       </p>
     </div>
 
     <div class="actions">
-      <button
-        id="saveResolutionButton"
-        type="submit"
-        class="green"
-      >
+      <button id="saveResolutionButton" type="submit" class="green">
         Save decision
       </button>
-      <button
-        id="cancelResolutionButton"
-        type="button"
-        class="secondary"
-      >
+      <button id="cancelResolutionButton" type="button" class="secondary">
         Cancel
       </button>
     </div>
   </form>
 
-  <div
-    id="resolutionMessage"
-    class="status"
-    role="status"
-    aria-live="polite"
-  >
+  <div id="resolutionMessage" class="status" role="status" aria-live="polite">
     No decision submitted.
   </div>
 </section>
@@ -592,18 +520,13 @@ th, td {
 <section class="panel">
   <h2>Diagnostics</h2>
   <p>
-    Authentication and API requests.
-    Challenges and signatures are not logged.
+    Authentication and API requests. Challenges and signatures are not logged.
     Server error diagnostics are displayed when available.
   </p>
   <pre id="diagnostics">Waiting for events...</pre>
   <div class="actions">
-    <button id="copyLogButton" class="secondary">
-      Copy diagnostic log
-    </button>
-    <button id="clearLogButton" class="secondary">
-      Clear log
-    </button>
+    <button id="copyLogButton" class="secondary">Copy diagnostic log</button>
+    <button id="clearLogButton" class="secondary">Clear log</button>
   </div>
 </section>
 
@@ -616,6 +539,8 @@ const ADMIN_ACCOUNT = "jocieprosza";
 const KEYCHAIN_TIMEOUT_MS = 45000;
 const API_TIMEOUT_MS = 20000;
 const REVIEW_PAGE_SIZE = 20;
+const SEARCH_DEBOUNCE_MS = 400;
+const REQUIRED_ADMIN_API_VERSION = "0.2.3";
 
 const $ = id => document.getElementById(id);
 
@@ -630,18 +555,15 @@ let reviewOffset = 0;
 let reviewTotal = 0;
 let reviewLocations = [];
 let selectedLocation = null;
+let reviewSearchTimer = null;
+let reviewRequestGeneration = 0;
+let reviewApiCompatible = false;
+let reviewApiVersion = null;
 
 function log(event) {
-  logLines.push(
-    `[${new Date().toISOString()}] ${event}`
-  );
-
-  if (logLines.length > 150) {
-    logLines = logLines.slice(-150);
-  }
-
-  $("diagnostics").textContent =
-    logLines.join("\n");
+  logLines.push(`[${new Date().toISOString()}] ${event}`);
+  if (logLines.length > 150) logLines = logLines.slice(-150);
+  $("diagnostics").textContent = logLines.join("\n");
 }
 
 function setMessage(value, type = "") {
@@ -651,55 +573,32 @@ function setMessage(value, type = "") {
 
 function setBusy(value) {
   busy = value;
-
-  [
-    "loginButton",
-    "logoutButton",
-    "refreshButton"
-  ].forEach(id => {
+  ["loginButton", "logoutButton", "refreshButton"].forEach(id => {
     $(id).disabled = value;
   });
 }
 
 function display(id, value) {
   $(id).textContent =
-    value === null ||
-    value === undefined ||
-    value === ""
-      ? "—"
-      : String(value);
+    value === null || value === undefined || value === ""
+      ? "—" : String(value);
 }
 
 function num(value) {
-  if (
-    value === null ||
-    value === undefined ||
-    value === ""
-  ) {
-    return "—";
-  }
-
+  if (value === null || value === undefined || value === "") return "—";
   const n = Number(value);
-
-  return Number.isFinite(n)
-    ? n.toLocaleString("en-US")
-    : "—";
+  return Number.isFinite(n) ? n.toLocaleString("en-US") : "—";
 }
 
 function date(value) {
   if (!value) return "—";
-
   const normalized =
     typeof value === "string" &&
     /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(value)
       ? value.replace(" ", "T") + "Z"
       : value;
-
   const d = new Date(normalized);
-
-  return Number.isNaN(d.getTime())
-    ? String(value)
-    : d.toLocaleString();
+  return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString();
 }
 
 function badge(id, label, kind = "") {
@@ -723,142 +622,71 @@ function rows(id, items, fields) {
 
   for (const item of items) {
     const tr = document.createElement("tr");
-
     for (const field of fields) {
       const td = document.createElement("td");
-
-      td.textContent =
-        item?.[field] == null
-          ? "—"
-          : String(item[field]);
-
+      td.textContent = item?.[field] == null ? "—" : String(item[field]);
       tr.appendChild(td);
     }
-
     tbody.appendChild(tr);
   }
 }
 
 // ============================================================
-// API — DIAGNOSTIC VERSION
+// API
 // ============================================================
 
 async function api(path, options = {}) {
   const controller = new AbortController();
-
-  const timer = setTimeout(
-    () => controller.abort(),
-    API_TIMEOUT_MS
-  );
-
+  const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   const url = new URL(path, location.origin);
-
-  url.searchParams.set(
-    "_t",
-    String(Date.now())
-  );
-
+  url.searchParams.set("_t", String(Date.now()));
   const started = performance.now();
 
-  log("API request started: " + url.pathname);
+  log("API request started: " + url.pathname + url.search);
 
   try {
-    const response = await fetch(
-      url.toString(),
-      {
-        credentials: "same-origin",
-        cache: "no-store",
-        ...options,
-        signal: controller.signal
-      }
-    );
+    const response = await fetch(url.toString(), {
+      credentials: "same-origin",
+      cache: "no-store",
+      ...options,
+      signal: controller.signal
+    });
 
-    const elapsed = (
-      (performance.now() - started) / 1000
-    ).toFixed(2);
-
-    log(
-      `API response: ${url.pathname}, ` +
-      `HTTP ${response.status}, ${elapsed}s`
-    );
+    const elapsed = ((performance.now() - started) / 1000).toFixed(2);
+    log(`API response: ${url.pathname}, HTTP ${response.status}, ${elapsed}s`);
 
     let data;
-
     try {
       data = await response.json();
     } catch {
-      throw new Error(
-        `HTTP ${response.status}: Server returned invalid JSON`
-      );
+      throw new Error(`HTTP ${response.status}: Server returned invalid JSON`);
     }
 
     if (!response.ok || !data?.ok) {
-      const message =
-        data?.error ||
-        `HTTP ${response.status}`;
+      const message = data?.error || `HTTP ${response.status}`;
 
-      if (
-        data?.diagnostic &&
-        typeof data.diagnostic === "object"
-      ) {
+      if (data?.diagnostic && typeof data.diagnostic === "object") {
         const diagnostic = data.diagnostic;
-
-        const version =
-          diagnostic.version || "unknown";
-
-        const requestId =
-          diagnostic.request_id || "unknown";
-
-        const stage =
-          diagnostic.stage || "unknown";
-
-        const name =
-          diagnostic.name || "unknown";
-
-        const detail =
-          diagnostic.message || "unknown";
-
         log("=== SERVER DIAGNOSTIC ===");
-        log("Version: " + version);
-        log("Request ID: " + requestId);
-        log("Stage: " + stage);
-        log("Error name: " + name);
-        log("Error message: " + detail);
+        log("Version: " + (diagnostic.version || "unknown"));
+        log("Request ID: " + (diagnostic.request_id || "unknown"));
+        log("Stage: " + (diagnostic.stage || "unknown"));
+        log("Error name: " + (diagnostic.name || "unknown"));
+        log("Error message: " + (diagnostic.message || "unknown"));
         log("=== END DIAGNOSTIC ===");
 
         throw new Error(
           message +
-          "\n\nDiagnostic stage: " +
-          stage +
-          "\nError: " +
-          detail +
-          "\nRequest ID: " +
-          requestId
+          "\nDiagnostic stage: " + (diagnostic.stage || "unknown") +
+          "\nError: " + (diagnostic.message || "unknown") +
+          "\nRequest ID: " + (diagnostic.request_id || "unknown")
         );
       }
 
-      if (
-        url.pathname ===
-        "/api/admin/locations/resolve"
-      ) {
-        log(
-          "SERVER DIAGNOSTIC UNAVAILABLE: " +
-          "Response contains no diagnostic object."
-        );
-
-        log(
-          "HTTP status: " + response.status
-        );
-
-        log(
-          "Server message: " + message
-        );
-
-        log(
-          "Possible causes: older admin-api.js " +
-          "deployment or failure before " +
-          "resolveAmbiguousLocation()."
-        );
+      if (url.pathname === "/api/admin/locations/resolve") {
+        log("SERVER DIAGNOSTIC UNAVAILABLE");
+        log("HTTP status: " + response.status);
+        log("Server message: " + message);
       }
 
       throw new Error(message);
@@ -866,17 +694,10 @@ async function api(path, options = {}) {
 
     return data;
   } catch (error) {
-    log(
-      `API failure: ${url.pathname}: ` +
-      error.message
-    );
-
+    log(`API failure: ${url.pathname}: ${error.message}`);
     if (error.name === "AbortError") {
-      throw new Error(
-        "API request timed out"
-      );
+      throw new Error("API request timed out");
     }
-
     throw error;
   } finally {
     clearTimeout(timer);
@@ -889,17 +710,12 @@ async function api(path, options = {}) {
 
 function renderIndexer(d) {
   const state = d.indexer_state || "unknown";
-
   badge(
     "indexerBadge",
     state.replaceAll("_", " "),
-    state === "synced"
-      ? "good"
-      : ["error", "stalled"].includes(state)
-        ? "bad"
-        : "warn"
+    state === "synced" ? "good" :
+      ["error", "stalled"].includes(state) ? "bad" : "warn"
   );
-
   display("censusAccounts", num(d.census_accounts));
   display("blocksBehind", num(d.blocks_behind));
   display("lastScannedBlock", num(d.last_scanned_block));
@@ -918,7 +734,6 @@ function renderProfiles(d) {
     d.import_complete ? "Complete" : "Importing",
     d.import_complete ? "good" : "warn"
   );
-
   display("accountsScanned", num(d.accounts_scanned));
   display("accountsWithLocation", num(d.accounts_with_location));
   display("uniqueLocations", num(d.unique_location_strings));
@@ -935,7 +750,6 @@ function renderClassifier(d) {
     d.last_classifier_error ? "Error" : "Available",
     d.last_classifier_error ? "bad" : "good"
   );
-
   display("classifierProcessed", num(d.last_classifier_processed));
   display("classifierMatched", num(d.last_classifier_matched));
   display("classifierAmbiguous", num(d.last_classifier_ambiguous));
@@ -943,27 +757,16 @@ function renderClassifier(d) {
   display("classifierVersion", d.classifier_version);
   display("classifierRun", date(d.last_classifier_run));
   display("classifierError", d.last_classifier_error || "None");
-
-  rows(
-    "classifierCounts",
-    d.counts,
-    ["status", "location_type", "count"]
-  );
+  rows("classifierCounts", d.counts, ["status", "location_type", "count"]);
 }
 
 function renderGeocoder(d) {
   badge(
     "geocoderBadge",
-    !d.configured
-      ? "Not configured"
-      : d.last_geocoder_error
-        ? "Error"
-        : "Configured",
-    !d.configured || d.last_geocoder_error
-      ? "bad"
-      : "good"
+    !d.configured ? "Not configured" :
+      d.last_geocoder_error ? "Error" : "Configured",
+    !d.configured || d.last_geocoder_error ? "bad" : "good"
   );
-
   display("geocoderProcessed", num(d.last_geocoder_processed));
   display("geocoderMatched", num(d.last_geocoder_matched));
   display("geocoderErrors", num(d.last_geocoder_errors));
@@ -971,26 +774,15 @@ function renderGeocoder(d) {
   display("geocoderVersion", d.geocoder_version);
   display("geocoderRun", date(d.last_geocoder_run));
   display("geocoderError", d.last_geocoder_error || "None");
-
-  rows(
-    "geocoderAttempts",
-    d.attempts,
-    ["outcome", "count"]
-  );
+  rows("geocoderAttempts", d.attempts, ["outcome", "count"]);
 }
 
 async function refreshDashboard() {
-  if (!authenticated || loadingDashboard) {
-    return;
-  }
+  if (!authenticated || loadingDashboard) return;
 
   loadingDashboard = true;
   $("refreshDataButton").disabled = true;
-
-  display(
-    "dashboardMessage",
-    "Loading operational data..."
-  );
+  display("dashboardMessage", "Loading operational data...");
 
   const endpoints = [
     ["/api/indexer/status", renderIndexer, "indexerBadge"],
@@ -1003,36 +795,20 @@ async function refreshDashboard() {
     const results = await Promise.allSettled(
       endpoints.map(entry => api(entry[0]))
     );
-
     const errors = [];
 
     results.forEach((result, index) => {
       const [path, render, badgeId] = endpoints[index];
-
       if (result.status === "fulfilled") {
         try {
           render(result.value);
         } catch (error) {
-          errors.push(
-            `${path}: ${error.message}`
-          );
-
-          badge(
-            badgeId,
-            "Display error",
-            "bad"
-          );
+          errors.push(`${path}: ${error.message}`);
+          badge(badgeId, "Display error", "bad");
         }
       } else {
-        errors.push(
-          `${path}: ${result.reason.message}`
-        );
-
-        badge(
-          badgeId,
-          "Unavailable",
-          "bad"
-        );
+        errors.push(`${path}: ${result.reason.message}`);
+        badge(badgeId, "Unavailable", "bad");
       }
     });
 
@@ -1042,16 +818,9 @@ async function refreshDashboard() {
         ? "Errors:\n" + errors.join("\n")
         : "All operational endpoints responded successfully."
     );
-
     $("dashboardMessage").className =
-      "status " +
-      (errors.length ? "error" : "success");
-
-    display(
-      "dashboardUpdated",
-      "Last refreshed: " +
-      new Date().toLocaleString()
-    );
+      "status " + (errors.length ? "error" : "success");
+    display("dashboardUpdated", "Last refreshed: " + new Date().toLocaleString());
   } finally {
     loadingDashboard = false;
     $("refreshDataButton").disabled = false;
@@ -1059,13 +828,12 @@ async function refreshDashboard() {
 }
 
 // ============================================================
-// LOCATION REVIEW
+// LOCATION REVIEW — SERVER-SIDE SEARCH
 // ============================================================
 
 function setReviewStatus(text, type = "") {
   $("reviewStatus").textContent = text;
-  $("reviewStatus").className =
-    "status " + type;
+  $("reviewStatus").className = "status " + type;
 }
 
 function closeResolution() {
@@ -1076,38 +844,28 @@ function closeResolution() {
 }
 
 function selectLocation(item) {
-  selectedLocation = item;
+  if (savingResolution) return;
 
+  selectedLocation = item;
   $("resolutionPanel").hidden = false;
 
-  display(
-    "selectedLocationText",
-    item.original_example
-  );
-
+  display("selectedLocationText", item.original_example);
   display(
     "selectedLocationMeta",
-    `ID: ${item.id} | ` +
-    `Key: ${item.location_key} | ` +
+    `ID: ${item.id} | Key: ${item.location_key} | ` +
     `Affected accounts: ${item.affected_accounts}`
   );
 
   $("resolutionForm").reset();
-
   $("matchFields").hidden = false;
-
   $("resolutionMessage").textContent =
     "Choose a decision and verify the data.";
+  $("resolutionMessage").className = "status";
 
-  $("resolutionMessage").className =
-    "status";
-
-  document.querySelectorAll(
-    ".location-item"
-  ).forEach(button => {
+  document.querySelectorAll(".location-item").forEach(button => {
     button.classList.toggle(
       "selected",
-      Number(button.dataset.id) === item.id
+      Number(button.dataset.id) === Number(item.id)
     );
   });
 
@@ -1121,48 +879,28 @@ function renderReviewList() {
   const list = $("locationList");
   list.replaceChildren();
 
-  const query = $("reviewSearch")
-    .value.trim()
-    .toLowerCase();
-
-  const visible = reviewLocations.filter(item =>
-    String(item.original_example)
-      .toLowerCase()
-      .includes(query) ||
-    String(item.location_key)
-      .toLowerCase()
-      .includes(query)
-  );
-
-  if (!visible.length) {
+  if (!reviewLocations.length) {
     const p = document.createElement("p");
-
-    p.textContent =
-      reviewLocations.length
-        ? "No locations match the page filter."
-        : "No ambiguous locations on this page.";
-
+    p.textContent = $("reviewSearch").value.trim()
+      ? "No ambiguous locations match this search."
+      : "No ambiguous locations on this page.";
     list.appendChild(p);
     return;
   }
 
-  for (const item of visible) {
+  for (const item of reviewLocations) {
     const button = document.createElement("button");
-
     button.type = "button";
     button.className = "location-item";
     button.dataset.id = String(item.id);
 
-    if (
-      selectedLocation &&
-      selectedLocation.id === item.id
-    ) {
+    if (selectedLocation && Number(selectedLocation.id) === Number(item.id)) {
       button.classList.add("selected");
     }
 
     const title = document.createElement("span");
     title.className = "location-title";
-    title.textContent = item.original_example;
+    title.textContent = item.original_example || item.location_key || "—";
 
     const meta = document.createElement("span");
     meta.className = "location-meta";
@@ -1172,197 +910,253 @@ function renderReviewList() {
       ` · ${item.source || "unknown source"}`;
 
     button.append(title, meta);
-
-    button.addEventListener(
-      "click",
-      () => selectLocation(item)
-    );
-
+    button.addEventListener("click", () => selectLocation(item));
     list.appendChild(button);
   }
 }
 
 function updatePagination() {
-  const page =
-    Math.floor(reviewOffset / REVIEW_PAGE_SIZE) + 1;
-
-  const totalPages = Math.max(
-    1,
-    Math.ceil(reviewTotal / REVIEW_PAGE_SIZE)
-  );
+  const page = Math.floor(reviewOffset / REVIEW_PAGE_SIZE) + 1;
+  const totalPages = Math.max(1, Math.ceil(reviewTotal / REVIEW_PAGE_SIZE));
 
   display("reviewTotal", num(reviewTotal));
-
-  display(
-    "reviewPageNumber",
-    `${page} / ${totalPages}`
-  );
+  display("reviewPageNumber", `${page} / ${totalPages}`);
 
   badge(
     "reviewCountBadge",
-    `${num(reviewTotal)} ambiguous`,
+    `${num(reviewTotal)} matching`,
     reviewTotal ? "warn" : "good"
   );
 
   $("previousPage").disabled =
-    loadingReview || reviewOffset === 0;
+    loadingReview || !reviewApiCompatible || reviewOffset === 0;
 
   $("nextPage").disabled =
-    loadingReview ||
+    loadingReview || !reviewApiCompatible ||
     reviewOffset + REVIEW_PAGE_SIZE >= reviewTotal;
 
   display(
     "reviewPagination",
     reviewTotal
       ? `Showing ${reviewOffset + 1}–` +
-        `${Math.min(
-          reviewOffset + reviewLocations.length,
-          reviewTotal
-        )} of ${num(reviewTotal)}`
-      : "No ambiguous locations."
+        `${Math.min(reviewOffset + reviewLocations.length, reviewTotal)}` +
+        ` of ${num(reviewTotal)}`
+      : "No matching ambiguous locations."
   );
 }
 
-async function loadReviewQueue() {
-  if (!authenticated || loadingReview) {
-    return;
+function compareVersions(actual, required) {
+  const a = String(actual).split(".").map(Number);
+  const b = String(required).split(".").map(Number);
+
+  if (
+    a.length !== 3 || b.length !== 3 ||
+    [...a, ...b].some(n => !Number.isSafeInteger(n) || n < 0)
+  ) {
+    return -1;
   }
 
-  loadingReview = true;
+  for (let i = 0; i < 3; i++) {
+    if (a[i] > b[i]) return 1;
+    if (a[i] < b[i]) return -1;
+  }
+  return 0;
+}
 
+function checkAdminApiVersion(data) {
+  const version = typeof data.version === "string" ? data.version : null;
+  reviewApiVersion = version;
+  display("adminApiVersion", version || "Unknown");
+
+  reviewApiCompatible =
+    version !== null &&
+    compareVersions(version, REQUIRED_ADMIN_API_VERSION) >= 0;
+
+  if (!reviewApiCompatible) {
+    log(
+      "ADMIN API VERSION WARNING: expected >= " +
+      REQUIRED_ADMIN_API_VERSION +
+      ", received " + (version || "unknown")
+    );
+  }
+
+  return reviewApiCompatible;
+}
+
+function invalidateReviewRequests() {
+  reviewRequestGeneration++;
+  loadingReview = false;
+}
+
+async function loadReviewQueue() {
+  if (!authenticated || savingResolution) return;
+
+  const generation = ++reviewRequestGeneration;
+  loadingReview = true;
   $("loadReviewButton").disabled = true;
   $("previousPage").disabled = true;
   $("nextPage").disabled = true;
 
+  const search = $("reviewSearch").value.trim();
+  const params = new URLSearchParams({
+    limit: String(REVIEW_PAGE_SIZE),
+    offset: String(reviewOffset),
+    search
+  });
+
   setReviewStatus(
-    "Loading ambiguous locations..."
+    search
+      ? `Searching all ambiguous locations for "${search}"...`
+      : "Loading ambiguous locations..."
   );
 
   try {
     const data = await api(
-      `/api/admin/locations/ambiguous` +
-      `?limit=${REVIEW_PAGE_SIZE}` +
-      `&offset=${reviewOffset}`
+      "/api/admin/locations/ambiguous?" + params.toString()
     );
 
+    if (generation !== reviewRequestGeneration || !authenticated) return;
+
     if (!Array.isArray(data.locations)) {
+      throw new Error("Invalid review queue response");
+    }
+
+    if (!checkAdminApiVersion(data)) {
+      reviewLocations = [];
+      reviewTotal = 0;
+      closeResolution();
+      renderReviewList();
+
+      setReviewStatus(
+        "Administrator API " + (reviewApiVersion || "unknown") +
+        " does not support verified database-wide search. " +
+        "Deploy src/admin-api.js v0.2.3 or newer.",
+        "error"
+      );
+      return;
+    }
+
+    if (data.search !== search) {
       throw new Error(
-        "Invalid review queue response"
+        "Server did not confirm the requested search filter."
       );
     }
 
-    reviewTotal = Number(data.total) || 0;
+    const total = Number(data.total);
+    if (!Number.isSafeInteger(total) || total < 0) {
+      throw new Error("Invalid result count returned by API");
+    }
+
+    reviewTotal = total;
     reviewLocations = data.locations;
 
-    closeResolution();
+    if (reviewOffset >= reviewTotal && reviewOffset > 0) {
+      reviewOffset = Math.max(
+        0,
+        Math.floor((Math.max(0, reviewTotal - 1)) / REVIEW_PAGE_SIZE) *
+          REVIEW_PAGE_SIZE
+      );
+      await loadReviewQueue();
+      return;
+    }
 
+    closeResolution();
     renderReviewList();
 
     setReviewStatus(
-      `Loaded ${data.count} locations. ` +
-      `Total ambiguous: ${num(reviewTotal)}.`,
+      search
+        ? `Found ${num(reviewTotal)} ambiguous locations matching "${search}".`
+        : `Loaded ${data.count} locations. Total ambiguous: ${num(reviewTotal)}.`,
       "success"
     );
 
     log(
-      `Review queue loaded: ` +
-      `${data.count} records, ` +
-      `${reviewTotal} total`
+      `Review queue loaded: ${data.count} records, ` +
+      `${reviewTotal} total, search="${search}", ` +
+      `API ${reviewApiVersion}`
     );
   } catch (error) {
+    if (generation !== reviewRequestGeneration) return;
     setReviewStatus(
-      "Could not load review queue: " +
-      error.message,
+      "Could not load review queue: " + error.message,
       "error"
     );
-
-    log(
-      "Review queue failed: " +
-      error.message
-    );
+    log("Review queue failed: " + error.message);
   } finally {
-    loadingReview = false;
-    $("loadReviewButton").disabled = false;
-    updatePagination();
+    if (generation === reviewRequestGeneration) {
+      loadingReview = false;
+      $("loadReviewButton").disabled = false;
+      updatePagination();
+    }
   }
 }
 
+function scheduleReviewSearch() {
+  clearTimeout(reviewSearchTimer);
+
+  invalidateReviewRequests();
+  reviewOffset = 0;
+  reviewLocations = [];
+  reviewTotal = 0;
+  closeResolution();
+  renderReviewList();
+  updatePagination();
+
+  setReviewStatus("Waiting to search...");
+
+  reviewSearchTimer = setTimeout(() => {
+    reviewSearchTimer = null;
+    loadReviewQueue();
+  }, SEARCH_DEBOUNCE_MS);
+}
+
+function clearReviewSearch() {
+  clearTimeout(reviewSearchTimer);
+  reviewSearchTimer = null;
+  $("reviewSearch").value = "";
+  invalidateReviewRequests();
+  reviewOffset = 0;
+  loadReviewQueue();
+}
+
+// ============================================================
+// LOCATION RESOLUTION
+// ============================================================
+
 function getMatchPayload() {
-  const country = $("countryCode")
-    .value.trim()
-    .toUpperCase();
-
-  const countryName = $("countryName")
-    .value.trim();
-
-  const region = $("regionCode")
-    .value.trim();
-
-  const regionName = $("regionName")
-    .value.trim();
-
-  const city = $("cityName")
-    .value.trim();
-
-  const locationType =
-    $("locationType").value;
-
-  const latitudeText =
-    $("latitude").value.trim();
-
-  const longitudeText =
-    $("longitude").value.trim();
+  const country = $("countryCode").value.trim().toUpperCase();
+  const countryName = $("countryName").value.trim();
+  const region = $("regionCode").value.trim();
+  const regionName = $("regionName").value.trim();
+  const city = $("cityName").value.trim();
+  const locationType = $("locationType").value;
+  const latitudeText = $("latitude").value.trim();
+  const longitudeText = $("longitude").value.trim();
 
   if (!/^[A-Z]{2}$/.test(country)) {
-    throw new Error(
-      "Enter a valid two-letter country code."
-    );
+    throw new Error("Enter a valid two-letter country code.");
   }
-
   if (!countryName) {
-    throw new Error(
-      "Country name is required."
-    );
+    throw new Error("Country name is required.");
   }
-
-  if (
-    !latitudeText ||
-    !longitudeText
-  ) {
-    throw new Error(
-      "Latitude and longitude are required."
-    );
+  if (!latitudeText || !longitudeText) {
+    throw new Error("Latitude and longitude are required.");
   }
 
   const lat = Number(latitudeText);
   const lon = Number(longitudeText);
 
   if (
-    !Number.isFinite(lat) ||
-    !Number.isFinite(lon) ||
-    lat < -90 ||
-    lat > 90 ||
-    lon < -180 ||
-    lon > 180
+    !Number.isFinite(lat) || !Number.isFinite(lon) ||
+    lat < -90 || lat > 90 || lon < -180 || lon > 180
   ) {
-    throw new Error(
-      "Invalid geographical coordinates."
-    );
+    throw new Error("Invalid geographical coordinates.");
   }
-
   if (!city) {
-    throw new Error(
-      "City or representative city is required."
-    );
+    throw new Error("City or representative city is required.");
   }
-
-  if (
-    locationType === "region_proxy" &&
-    !regionName
-  ) {
-    throw new Error(
-      "Region name is required for a region proxy."
-    );
+  if (locationType === "region_proxy" && !regionName) {
+    throw new Error("Region name is required for a region proxy.");
   }
 
   return {
@@ -1382,118 +1176,66 @@ function getMatchPayload() {
 async function submitResolution(event) {
   event.preventDefault();
 
-  if (
-    !authenticated ||
-    !selectedLocation ||
-    savingResolution
-  ) {
-    return;
-  }
+  if (!authenticated || !selectedLocation || savingResolution) return;
 
   let payload;
-
   try {
-    payload =
-      $("resolutionAction").value === "reject"
-        ? {
-            id: selectedLocation.id,
-            action: "reject"
-          }
-        : getMatchPayload();
+    payload = $("resolutionAction").value === "reject"
+      ? { id: selectedLocation.id, action: "reject" }
+      : getMatchPayload();
   } catch (error) {
-    $("resolutionMessage").textContent =
-      error.message;
-
-    $("resolutionMessage").className =
-      "status error";
-
+    $("resolutionMessage").textContent = error.message;
+    $("resolutionMessage").className = "status error";
     return;
   }
 
-  const actionDescription =
-    payload.action === "reject"
-      ? "REJECT"
-      : "MATCH";
-
+  const actionDescription = payload.action === "reject" ? "REJECT" : "MATCH";
   const confirmation =
     `Confirm ${actionDescription} for:\n\n` +
     `${selectedLocation.original_example}\n\n` +
-    `Affected accounts: ` +
-    `${selectedLocation.affected_accounts}\n\n` +
-    (
-      payload.action === "match"
-        ? `Country: ${payload.country_name}\n` +
-          `Region: ${payload.region_name || "—"}\n` +
-          `City: ${payload.city}\n` +
-          `Coordinates: ${payload.lat}, ${payload.lon}\n\n`
-        : ""
-    ) +
-    "This decision cannot currently be undone " +
-    "from the administration panel.";
+    `Affected accounts: ${selectedLocation.affected_accounts}\n\n` +
+    (payload.action === "match"
+      ? `Country: ${payload.country_name}\n` +
+        `Region: ${payload.region_name || "—"}\n` +
+        `City: ${payload.city}\n` +
+        `Coordinates: ${payload.lat}, ${payload.lon}\n\n`
+      : "") +
+    "This decision cannot currently be undone from the administration panel.";
 
-  if (!window.confirm(confirmation)) {
-    return;
-  }
+  if (!window.confirm(confirmation)) return;
 
   savingResolution = true;
   $("saveResolutionButton").disabled = true;
-
-  $("resolutionMessage").textContent =
-    "Saving decision...";
-
-  $("resolutionMessage").className =
-    "status";
+  $("resolutionMessage").textContent = "Saving decision...";
+  $("resolutionMessage").className = "status";
 
   try {
-    const result = await api(
-      "/api/admin/locations/resolve",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(payload)
-      }
-    );
+    const result = await api("/api/admin/locations/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
 
     log(
-      `Location ${result.id} resolved: ` +
-      `${result.status}; ` +
+      `Location ${result.id} resolved: ${result.status}; ` +
       `${result.affected_profiles} profiles updated`
     );
 
-    $("resolutionMessage").textContent =
-      `Saved: ${result.status}. ` +
-      `${num(result.affected_profiles)} ` +
-      `profile records updated.`;
-
-    $("resolutionMessage").className =
-      "status success";
-
-    const resolvedText =
-      selectedLocation.original_example;
-
+    const resolvedText = selectedLocation.original_example;
     closeResolution();
+
+    await loadReviewQueue();
+    await refreshDashboard();
 
     setReviewStatus(
       `Successfully resolved "${resolvedText}". ` +
       `${num(result.affected_profiles)} profiles updated.`,
       "success"
     );
-
-    await loadReviewQueue();
-    await refreshDashboard();
   } catch (error) {
-    $("resolutionMessage").textContent =
-      "Save failed: " + error.message;
-
-    $("resolutionMessage").className =
-      "status error";
-
-    log(
-      "Resolution failed: " +
-      error.message
-    );
+    $("resolutionMessage").textContent = "Save failed: " + error.message;
+    $("resolutionMessage").className = "status error";
+    log("Resolution failed: " + error.message);
   } finally {
     savingResolution = false;
     $("saveResolutionButton").disabled = false;
@@ -1506,10 +1248,7 @@ async function submitResolution(event) {
 
 async function refreshSession() {
   log("Checking administrator session");
-
-  const session = await api(
-    "/api/admin/session"
-  );
+  const session = await api("/api/admin/session");
 
   authenticated =
     session.authenticated === true &&
@@ -1520,30 +1259,20 @@ async function refreshSession() {
   $("adminPanel").hidden = !authenticated;
 
   if (authenticated) {
-    display(
-      "sessionInfo",
-      "Signed in as @" + session.account
-    );
-
+    display("sessionInfo", "Signed in as @" + session.account);
     setMessage(
-      "Authenticated. Session expires: " +
-      session.expires_at,
+      "Authenticated. Session expires: " + session.expires_at,
       "success"
     );
-
-    log(
-      "Administrator session authenticated"
-    );
+    log("Administrator session authenticated");
   } else {
-    display(
-      "sessionInfo",
-      "Not authenticated."
-    );
-
-    setMessage(
-      "Administrator authentication required."
-    );
-
+    display("sessionInfo", "Not authenticated.");
+    setMessage("Administrator authentication required.");
+    clearTimeout(reviewSearchTimer);
+    reviewSearchTimer = null;
+    invalidateReviewRequests();
+    reviewLocations = [];
+    reviewTotal = 0;
     closeResolution();
   }
 
@@ -1552,64 +1281,38 @@ async function refreshSession() {
 
 function getKeychain() {
   const keychain = window.hive_keychain;
+  log("Hive Keychain available: " + Boolean(keychain));
 
-  log(
-    "Hive Keychain available: " +
-    Boolean(keychain)
-  );
-
-  if (
-    !keychain ||
-    typeof keychain.requestSignBuffer !== "function"
-  ) {
+  if (!keychain || typeof keychain.requestSignBuffer !== "function") {
     throw new Error(
-      "Hive Keychain is unavailable. " +
-      "Open this page inside Hive Keychain."
+      "Hive Keychain is unavailable. Open this page inside Hive Keychain."
     );
   }
-
   return keychain;
 }
 
-function signChallenge(
-  keychain,
-  account,
-  challengeText
-) {
+function signChallenge(keychain, account, challengeText) {
   return new Promise((resolve, reject) => {
     let settled = false;
-
     const started = performance.now();
 
     const timeout = setTimeout(
-      () => finish(
-        new Error(
-          "Hive Keychain callback timeout."
-        )
-      ),
+      () => finish(new Error("Hive Keychain callback timeout.")),
       KEYCHAIN_TIMEOUT_MS
     );
 
     function finish(error, signature) {
       if (settled) return;
-
       settled = true;
       clearTimeout(timeout);
-
       if (error) reject(error);
       else resolve(signature);
     }
 
-    log(
-      "Calling Keychain requestSignBuffer"
-    );
-
+    log("Calling Keychain requestSignBuffer");
     log("Signing account: @" + account);
     log("Key type: Posting");
-    log(
-      "Message length: " +
-      challengeText.length
-    );
+    log("Message length: " + challengeText.length);
 
     try {
       keychain.requestSignBuffer(
@@ -1617,24 +1320,11 @@ function signChallenge(
         challengeText,
         "Posting",
         result => {
-          const elapsed = (
-            (performance.now() - started) / 1000
-          ).toFixed(2);
+          const elapsed = ((performance.now() - started) / 1000).toFixed(2);
+          log("Keychain callback received after " + elapsed + "s");
+          log("Keychain success: " + Boolean(result?.success));
 
-          log(
-            "Keychain callback received after " +
-            elapsed + "s"
-          );
-
-          log(
-            "Keychain success: " +
-            Boolean(result?.success)
-          );
-
-          if (
-            !result ||
-            result.success !== true
-          ) {
+          if (!result || result.success !== true) {
             finish(
               new Error(
                 result?.message ||
@@ -1642,32 +1332,16 @@ function signChallenge(
                 "Signature rejected."
               )
             );
-
             return;
           }
 
-          if (
-            typeof result.result !== "string" ||
-            !result.result
-          ) {
-            finish(
-              new Error(
-                "Keychain returned no signature."
-              )
-            );
-
+          if (typeof result.result !== "string" || !result.result) {
+            finish(new Error("Keychain returned no signature."));
             return;
           }
 
-          log(
-            "Signature received successfully"
-          );
-
-          log(
-            "Signature length: " +
-            result.result.length
-          );
-
+          log("Signature received successfully");
+          log("Signature length: " + result.result.length);
           finish(null, result.result);
         }
       );
@@ -1679,85 +1353,50 @@ function signChallenge(
 
 async function login() {
   if (busy) return;
-
   setBusy(true);
   log("=== LOGIN STARTED ===");
 
   try {
     const keychain = getKeychain();
+    setMessage("Requesting authentication challenge...");
 
-    setMessage(
-      "Requesting authentication challenge..."
-    );
-
-    const challenge = await api(
-      "/api/admin/challenge",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: "{}"
-      }
-    );
+    const challenge = await api("/api/admin/challenge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    });
 
     if (
       challenge.account !== ADMIN_ACCOUNT ||
       typeof challenge.nonce !== "string" ||
       typeof challenge.message !== "string"
     ) {
-      throw new Error(
-        "Invalid administrator challenge."
-      );
+      throw new Error("Invalid administrator challenge.");
     }
 
-    setMessage(
-      "Waiting for Hive Keychain signature..."
-    );
-
+    setMessage("Waiting for Hive Keychain signature...");
     const signature = await signChallenge(
-      keychain,
-      ADMIN_ACCOUNT,
-      challenge.message
+      keychain, ADMIN_ACCOUNT, challenge.message
     );
 
-    setMessage(
-      "Verifying signature..."
-    );
-
-    await api(
-      "/api/admin/login",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          nonce: challenge.nonce,
-          signature
-        })
-      }
-    );
+    setMessage("Verifying signature...");
+    await api("/api/admin/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        nonce: challenge.nonce,
+        signature
+      })
+    });
 
     if (await refreshSession()) {
-      await Promise.all([
-        refreshDashboard(),
-        loadReviewQueue()
-      ]);
+      await Promise.all([refreshDashboard(), loadReviewQueue()]);
     }
 
     log("=== LOGIN COMPLETED ===");
   } catch (error) {
-    log(
-      "LOGIN FAILED: " +
-      error.message
-    );
-
-    setMessage(
-      "Login failed: " +
-      error.message,
-      "error"
-    );
+    log("LOGIN FAILED: " + error.message);
+    setMessage("Login failed: " + error.message, "error");
   } finally {
     setBusy(false);
   }
@@ -1765,30 +1404,18 @@ async function login() {
 
 async function logout() {
   if (busy) return;
-
   setBusy(true);
 
   try {
-    await api(
-      "/api/admin/logout",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: "{}"
-      }
-    );
-
+    await api("/api/admin/logout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    });
     await refreshSession();
-
     log("Logout completed");
   } catch (error) {
-    setMessage(
-      "Logout failed: " +
-      error.message,
-      "error"
-    );
+    setMessage("Logout failed: " + error.message, "error");
   } finally {
     setBusy(false);
   }
@@ -1798,175 +1425,95 @@ async function logout() {
 // EVENTS
 // ============================================================
 
-$("loginButton").addEventListener(
-  "click",
-  login
-);
+$("loginButton").addEventListener("click", login);
+$("logoutButton").addEventListener("click", logout);
 
-$("logoutButton").addEventListener(
-  "click",
-  logout
-);
+$("refreshButton").addEventListener("click", async () => {
+  if (busy) return;
+  setBusy(true);
 
-$("refreshButton").addEventListener(
-  "click",
-  async () => {
-    if (busy) return;
-
-    setBusy(true);
-
-    try {
-      if (await refreshSession()) {
-        await Promise.all([
-          refreshDashboard(),
-          loadReviewQueue()
-        ]);
-      }
-    } catch (error) {
-      setMessage(
-        "Session check failed: " +
-        error.message,
-        "error"
-      );
-    } finally {
-      setBusy(false);
+  try {
+    if (await refreshSession()) {
+      await Promise.all([refreshDashboard(), loadReviewQueue()]);
     }
+  } catch (error) {
+    setMessage("Session check failed: " + error.message, "error");
+  } finally {
+    setBusy(false);
   }
-);
+});
 
-$("refreshDataButton").addEventListener(
-  "click",
-  refreshDashboard
-);
+$("refreshDataButton").addEventListener("click", refreshDashboard);
 
-$("loadReviewButton").addEventListener(
-  "click",
-  loadReviewQueue
-);
+$("loadReviewButton").addEventListener("click", () => {
+  clearTimeout(reviewSearchTimer);
+  reviewSearchTimer = null;
+  loadReviewQueue();
+});
 
-$("reviewSearch").addEventListener(
-  "input",
-  renderReviewList
-);
+$("reviewSearch").addEventListener("input", scheduleReviewSearch);
+$("clearSearchButton").addEventListener("click", clearReviewSearch);
 
-$("previousPage").addEventListener(
-  "click",
-  async () => {
-    if (
-      loadingReview ||
-      reviewOffset === 0
-    ) {
-      return;
-    }
+$("previousPage").addEventListener("click", async () => {
+  if (loadingReview || reviewOffset === 0 || !reviewApiCompatible) return;
+  clearTimeout(reviewSearchTimer);
+  reviewSearchTimer = null;
+  reviewOffset = Math.max(0, reviewOffset - REVIEW_PAGE_SIZE);
+  await loadReviewQueue();
+});
 
-    reviewOffset = Math.max(
-      0,
-      reviewOffset - REVIEW_PAGE_SIZE
-    );
+$("nextPage").addEventListener("click", async () => {
+  if (
+    loadingReview || !reviewApiCompatible ||
+    reviewOffset + REVIEW_PAGE_SIZE >= reviewTotal
+  ) return;
 
-    await loadReviewQueue();
+  clearTimeout(reviewSearchTimer);
+  reviewSearchTimer = null;
+  reviewOffset += REVIEW_PAGE_SIZE;
+  await loadReviewQueue();
+});
+
+$("resolutionAction").addEventListener("change", () => {
+  $("matchFields").hidden =
+    $("resolutionAction").value === "reject";
+});
+
+$("resolutionForm").addEventListener("submit", submitResolution);
+$("cancelResolutionButton").addEventListener("click", closeResolution);
+
+$("copyLogButton").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(logLines.join("\n"));
+    setMessage("Diagnostic log copied.", "success");
+  } catch {
+    setMessage("Could not copy diagnostic log.", "error");
   }
-);
+});
 
-$("nextPage").addEventListener(
-  "click",
-  async () => {
-    if (
-      loadingReview ||
-      reviewOffset + REVIEW_PAGE_SIZE >= reviewTotal
-    ) {
-      return;
-    }
-
-    reviewOffset += REVIEW_PAGE_SIZE;
-
-    await loadReviewQueue();
-  }
-);
-
-$("resolutionAction").addEventListener(
-  "change",
-  () => {
-    $("matchFields").hidden =
-      $("resolutionAction").value === "reject";
-  }
-);
-
-$("resolutionForm").addEventListener(
-  "submit",
-  submitResolution
-);
-
-$("cancelResolutionButton").addEventListener(
-  "click",
-  closeResolution
-);
-
-$("copyLogButton").addEventListener(
-  "click",
-  async () => {
-    try {
-      await navigator.clipboard.writeText(
-        logLines.join("\n")
-      );
-
-      setMessage(
-        "Diagnostic log copied.",
-        "success"
-      );
-    } catch {
-      setMessage(
-        "Could not copy diagnostic log.",
-        "error"
-      );
-    }
-  }
-);
-
-$("clearLogButton").addEventListener(
-  "click",
-  () => {
-    logLines = [];
-
-    $("diagnostics").textContent =
-      "Log cleared.";
-  }
-);
+$("clearLogButton").addEventListener("click", () => {
+  logLines = [];
+  $("diagnostics").textContent = "Log cleared.";
+});
 
 // ============================================================
 // INITIALIZATION
 // ============================================================
 
-log(
-  "Hive Census Administration initialized"
-);
+log("Hive Census Administration initialized — search UI v0.2.3");
 
 refreshSession()
   .then(async isAuthenticated => {
     if (isAuthenticated) {
-      await Promise.all([
-        refreshDashboard(),
-        loadReviewQueue()
-      ]);
+      await Promise.all([refreshDashboard(), loadReviewQueue()]);
     }
   })
   .catch(error => {
     authenticated = false;
-
     $("adminPanel").hidden = true;
-
-    $("sessionInfo").textContent =
-      "Unable to check session.";
-
-    log(
-      "Initial session check failed: " +
-      error.message
-    );
-
-    setMessage(
-      error.message,
-      "error"
-    );
+    $("sessionInfo").textContent = "Unable to check session.";
+    log("Initial session check failed: " + error.message);
+    setMessage(error.message, "error");
   });
 </script>
 </body>
