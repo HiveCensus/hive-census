@@ -2,17 +2,15 @@
 /*
  * Hive Census — Administrator API
  *
- * Authentication:
- * - Hive Keychain posting signature
- * - One-time D1 challenges
- * - Hive blockchain authority verification
- * - HttpOnly session cookies
+ * Location Review v0.2.1
  *
- * Location Review v0.2:
- * - Authenticated ambiguous-location queue
+ * - Hive Keychain authentication
+ * - D1-backed administrator sessions
+ * - Authenticated ambiguous-location review
  * - Manual match / reject
  * - Atomic D1 updates
- * - Individual account overrides preserved
+ * - Account overrides preserved
+ * - Authenticated diagnostic error responses
  */
 
 import {
@@ -62,9 +60,7 @@ function failure(message, status = 400) {
 function requestIsSameOrigin(request) {
   const origin = request.headers.get("Origin");
 
-  if (!origin) {
-    return false;
-  }
+  if (!origin) return false;
 
   try {
     const requestUrl = new URL(request.url);
@@ -87,11 +83,7 @@ function validateMutationRequest(request) {
   const contentType =
     request.headers.get("Content-Type") || "";
 
-  if (
-    !/^application\/json(?:\s*;|$)/i.test(
-      contentType
-    )
-  ) {
+  if (!/^application\/json(?:\s*;|$)/i.test(contentType)) {
     return failure(
       "Content-Type must be application/json",
       415
@@ -102,15 +94,18 @@ function validateMutationRequest(request) {
 }
 
 async function readJsonBody(request) {
-  const contentLength = Number(
-    request.headers.get("Content-Length")
-  );
+  const contentLengthHeader =
+    request.headers.get("Content-Length");
 
-  if (
-    Number.isFinite(contentLength) &&
-    contentLength > MAX_BODY_BYTES
-  ) {
-    throw new Error("Request body too large");
+  if (contentLengthHeader !== null) {
+    const contentLength = Number(contentLengthHeader);
+
+    if (
+      Number.isFinite(contentLength) &&
+      contentLength > MAX_BODY_BYTES
+    ) {
+      throw new Error("Request body too large");
+    }
   }
 
   const text = await request.text();
@@ -324,9 +319,7 @@ async function login(request, env) {
 export async function getAdminSession(request, env) {
   const token = readAdminSessionCookie(request);
 
-  if (!token) {
-    return null;
-  }
+  if (!token) return null;
 
   const tokenHash =
     await hashAdminSessionToken(token);
@@ -344,9 +337,7 @@ export async function getAdminSession(request, env) {
     ADMIN_ACCOUNT
   ).first();
 
-  if (!session) {
-    return null;
-  }
+  if (!session) return null;
 
   return {
     account: session.account,
@@ -474,7 +465,7 @@ async function listAmbiguousLocations(request, env) {
 
   return respond({
     ok: true,
-    version: "0.2.0",
+    version: "0.2.1",
     account: ADMIN_ACCOUNT,
     total,
     limit,
@@ -489,6 +480,7 @@ async function listAmbiguousLocations(request, env) {
 function validOptionalString(value, maxLength) {
   return (
     value === null ||
+    value === undefined ||
     (
       typeof value === "string" &&
       value.length <= maxLength
@@ -502,7 +494,6 @@ function cleanOptionalString(value) {
   }
 
   const trimmed = value.trim();
-
   return trimmed || null;
 }
 
@@ -595,134 +586,177 @@ function validateResolution(body) {
   return null;
 }
 
-async function resolveAmbiguousLocation(request, env) {
-  let body;
-
-  try {
-    body = await readJsonBody(request);
-  } catch {
-    return failure("Invalid request body");
-  }
-
-  const validationError = validateResolution(body);
-
-  if (validationError) {
-    return failure(validationError, 400);
-  }
-
-  const existing = await env.DB.prepare(`
-    SELECT id, original_example, status
-    FROM location_matches
-    WHERE id = ?
-  `).bind(body.id).first();
-
-  if (!existing) {
-    return failure("Location not found", 404);
-  }
-
-  if (existing.status !== "ambiguous") {
-    return failure(
-      "Location has already been resolved",
-      409
-    );
-  }
-
-  const isMatch = body.action === "match";
-
-  const status = isMatch
-    ? "matched"
-    : "rejected";
-
-  const update = env.DB.prepare(`
-    UPDATE location_matches
-    SET
-      status = ?,
-      location_type = ?,
-      country = ?,
-      country_name = ?,
-      region = ?,
-      region_name = ?,
-      city = ?,
-      lat = ?,
-      lon = ?,
-      confidence = ?,
-      source = 'admin_manual',
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-      AND status = 'ambiguous'
-  `).bind(
-    status,
-    isMatch ? body.location_type : null,
-    isMatch ? body.country : null,
-    isMatch ? body.country_name.trim() : null,
-    isMatch ? cleanOptionalString(body.region) : null,
-    isMatch ? cleanOptionalString(body.region_name) : null,
-    isMatch ? cleanOptionalString(body.city) : null,
-    isMatch ? body.lat : null,
-    isMatch ? body.lon : null,
-    isMatch ? 1 : null,
-    body.id
+function diagnosticFailure(error, stage, requestId) {
+  console.error(
+    "[Admin API] Location resolution failed",
+    {
+      stage,
+      requestId,
+      error
+    }
   );
 
-  /*
-   * D1 batch executes the statements as
-   * one transaction.
-   *
-   * The second statement only synchronizes
-   * accounts if the first statement actually
-   * established an admin_manual resolution.
-   *
-   * Individual overrides are excluded.
-   */
-  const sync = env.DB.prepare(`
-    UPDATE profile_locations
-    SET match_status = ?
-    WHERE match_id = ?
-      AND EXISTS (
-        SELECT 1
-        FROM location_matches
-        WHERE id = ?
-          AND status = ?
-          AND source = 'admin_manual'
-      )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM profile_location_overrides o
-        WHERE o.account = profile_locations.account
-      )
-  `).bind(
-    status,
-    body.id,
-    body.id,
-    status
-  );
-
-  const results = await env.DB.batch([
-    update,
-    sync
-  ]);
-
-  const changes = Number(
-    results[0]?.meta?.changes || 0
-  );
-
-  if (changes !== 1) {
-    return failure(
-      "Location was modified concurrently; refresh the queue",
-      409
-    );
-  }
+  const message =
+    error instanceof Error
+      ? error.message
+      : String(error);
 
   return respond({
-    ok: true,
-    id: body.id,
-    original_example: existing.original_example,
-    status,
-    source: "admin_manual",
-    affected_profiles: Number(
-      results[1]?.meta?.changes || 0
-    )
-  });
+    ok: false,
+    error: "Administrator service temporarily unavailable",
+    diagnostic: {
+      version: "0.2.1",
+      request_id: requestId,
+      stage,
+      name: error?.name || "UnknownError",
+      message: message.slice(0, 1000)
+    }
+  }, 503);
+}
+
+async function resolveAmbiguousLocation(request, env) {
+  let stage = "read_body";
+  const requestId = crypto.randomUUID();
+
+  try {
+    let body;
+
+    try {
+      body = await readJsonBody(request);
+    } catch {
+      return failure("Invalid request body");
+    }
+
+    stage = "validate_body";
+
+    const validationError = validateResolution(body);
+
+    if (validationError) {
+      return failure(validationError, 400);
+    }
+
+    stage = "load_location";
+
+    const existing = await env.DB.prepare(`
+      SELECT id, original_example, status
+      FROM location_matches
+      WHERE id = ?
+    `).bind(body.id).first();
+
+    if (!existing) {
+      return failure("Location not found", 404);
+    }
+
+    if (existing.status !== "ambiguous") {
+      return failure(
+        "Location has already been resolved",
+        409
+      );
+    }
+
+    const isMatch = body.action === "match";
+    const status = isMatch ? "matched" : "rejected";
+
+    stage = "prepare_update";
+
+    const update = env.DB.prepare(`
+      UPDATE location_matches
+      SET
+        status = ?,
+        location_type = ?,
+        country = ?,
+        country_name = ?,
+        region = ?,
+        region_name = ?,
+        city = ?,
+        lat = ?,
+        lon = ?,
+        confidence = ?,
+        source = 'admin_manual',
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND status = 'ambiguous'
+    `).bind(
+      status,
+      isMatch ? body.location_type : null,
+      isMatch ? body.country : null,
+      isMatch ? body.country_name.trim() : null,
+      isMatch ? cleanOptionalString(body.region) : null,
+      isMatch ? cleanOptionalString(body.region_name) : null,
+      isMatch ? cleanOptionalString(body.city) : null,
+      isMatch ? body.lat : null,
+      isMatch ? body.lon : null,
+      isMatch ? 1 : null,
+      body.id
+    );
+
+    stage = "prepare_profile_sync";
+
+    const sync = env.DB.prepare(`
+      UPDATE profile_locations
+      SET match_status = ?
+      WHERE match_id = ?
+        AND (
+          match_status IS NULL
+          OR match_status != ?
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM location_matches
+          WHERE id = ?
+            AND status = ?
+            AND source = 'admin_manual'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM profile_location_overrides o
+          WHERE o.account = profile_locations.account
+        )
+    `).bind(
+      status,
+      body.id,
+      status,
+      body.id,
+      status
+    );
+
+    stage = "execute_d1_batch";
+
+    const results = await env.DB.batch([
+      update,
+      sync
+    ]);
+
+    stage = "verify_update";
+
+    const changes = Number(
+      results[0]?.meta?.changes || 0
+    );
+
+    if (changes !== 1) {
+      return failure(
+        "Location was modified concurrently; refresh the queue",
+        409
+      );
+    }
+
+    return respond({
+      ok: true,
+      id: body.id,
+      original_example: existing.original_example,
+      status,
+      source: "admin_manual",
+      affected_profiles: Number(
+        results[1]?.meta?.changes || 0
+      )
+    });
+  } catch (error) {
+    return diagnosticFailure(
+      error,
+      stage,
+      requestId
+    );
+  }
 }
 
 // ============================================================
@@ -779,9 +813,7 @@ export async function handleAdminApi(request, env) {
     const validation =
       validateMutationRequest(request);
 
-    if (validation) {
-      return validation;
-    }
+    if (validation) return validation;
   }
 
   try {
