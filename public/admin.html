@@ -594,6 +594,7 @@ th, td {
   <p>
     Authentication and API requests.
     Challenges and signatures are not logged.
+    Server error diagnostics are displayed when available.
   </p>
   <pre id="diagnostics">Waiting for events...</pre>
   <div class="actions">
@@ -738,6 +739,10 @@ function rows(id, items, fields) {
   }
 }
 
+// ============================================================
+// API — DIAGNOSTIC VERSION
+// ============================================================
+
 async function api(path, options = {}) {
   const controller = new AbortController();
 
@@ -777,13 +782,86 @@ async function api(path, options = {}) {
       `HTTP ${response.status}, ${elapsed}s`
     );
 
-    const data = await response.json();
+    let data;
 
-    if (!response.ok || !data.ok) {
+    try {
+      data = await response.json();
+    } catch {
       throw new Error(
-        data.error ||
-        `HTTP ${response.status}`
+        `HTTP ${response.status}: Server returned invalid JSON`
       );
+    }
+
+    if (!response.ok || !data?.ok) {
+      const message =
+        data?.error ||
+        `HTTP ${response.status}`;
+
+      if (
+        data?.diagnostic &&
+        typeof data.diagnostic === "object"
+      ) {
+        const diagnostic = data.diagnostic;
+
+        const version =
+          diagnostic.version || "unknown";
+
+        const requestId =
+          diagnostic.request_id || "unknown";
+
+        const stage =
+          diagnostic.stage || "unknown";
+
+        const name =
+          diagnostic.name || "unknown";
+
+        const detail =
+          diagnostic.message || "unknown";
+
+        log("=== SERVER DIAGNOSTIC ===");
+        log("Version: " + version);
+        log("Request ID: " + requestId);
+        log("Stage: " + stage);
+        log("Error name: " + name);
+        log("Error message: " + detail);
+        log("=== END DIAGNOSTIC ===");
+
+        throw new Error(
+          message +
+          "\n\nDiagnostic stage: " +
+          stage +
+          "\nError: " +
+          detail +
+          "\nRequest ID: " +
+          requestId
+        );
+      }
+
+      if (
+        url.pathname ===
+        "/api/admin/locations/resolve"
+      ) {
+        log(
+          "SERVER DIAGNOSTIC UNAVAILABLE: " +
+          "Response contains no diagnostic object."
+        );
+
+        log(
+          "HTTP status: " + response.status
+        );
+
+        log(
+          "Server message: " + message
+        );
+
+        log(
+          "Possible causes: older admin-api.js " +
+          "deployment or failure before " +
+          "resolveAmbiguousLocation()."
+        );
+      }
+
+      throw new Error(message);
     }
 
     return data;
