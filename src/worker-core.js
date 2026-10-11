@@ -2,7 +2,7 @@
 import { classifyLocation, getClassifierVersion } from "./location-classifier.js";
 import { geocodeLocation, getGeocoderVersion } from "./location-geocoder.js";
 
-const VERSION = "0.9.8";
+const VERSION = "0.9.9";
 const HIVE_RPC = "https://api.hive.blog";
 const CENSUS_ID = "hive_census";
 const PROTOCOL_VERSION = 1;
@@ -18,8 +18,6 @@ const PROFILE_FETCH_BATCH_SIZE = 100;
 const LOCATION_CLASSIFY_PER_RUN = 100;
 const GEOCODE_PER_RUN = 10;
 const GEOCODE_ERROR_RETRY_HOURS = 24;
-
-const RESCAN_PREFIX = "rescan_";
 
 // ============================================================
 // WORKER
@@ -253,8 +251,6 @@ export default {
       }
     }
 
-    // Status is public and read-only.
-    // Starting a rescan is deliberately NOT exposed here.
     if (url.pathname === "/api/profiles/rescan/status") {
       try {
         return jsonResponse(await getProfileRescanStatus(env));
@@ -736,7 +732,7 @@ function getTransactionId(block, index) {
 }
 
 // ============================================================
-// PROFILE IMPORTER
+// PROFILE IMPORTER AND RESCAN SCHEDULER
 // ============================================================
 
 async function runScheduledProfileImporter(env) {
@@ -744,7 +740,6 @@ async function runScheduledProfileImporter(env) {
     env, "import_complete", "false"
   );
 
-  // First import always has priority.
   if (complete !== "true") {
     try {
       await importProfileBatch(
@@ -762,27 +757,18 @@ async function runScheduledProfileImporter(env) {
     return;
   }
 
-  // Once the initial import is complete, only an explicitly
-  // requested rescan may run.
-  const rescanState = await getProfileMeta(
+  const state = await getProfileMeta(
     env, "rescan_state", "idle"
   );
 
-  if (rescanState !== "running") {
-    return;
-  }
+  if (state !== "running") return;
 
   try {
     const result = await rescanProfileBatch(
       env, PROFILE_ACCOUNTS_PER_RUN
     );
-
     await setProfileMeta(env, "rescan_last_error", "");
-
-    console.log(
-      "[Rescan] Batch completed",
-      JSON.stringify(result)
-    );
+    console.log("[Rescan]", JSON.stringify(result));
   } catch (error) {
     await setProfileMeta(
       env,
@@ -915,85 +901,81 @@ async function importProfileBatch(env, maxAccounts) {
 }
 
 // ============================================================
-// PROFILE RESCAN
+// MANUAL FULL PROFILE RESCAN
 // ============================================================
 
-// This function is intended to be called only from the
-// authenticated administrator API in a subsequent deployment.
-// No unauthenticated HTTP route invokes it.
+// Called only by the authenticated administrator API.
+// This function does not expose a public start endpoint.
 export async function startProfileRescan(env) {
   if (!env?.DB) {
     throw new Error("D1 database is not configured");
   }
 
-  const initialImportComplete = await getProfileMeta(
+  const importComplete = await getProfileMeta(
     env, "import_complete", "false"
   );
 
-  if (initialImportComplete !== "true") {
+  if (importComplete !== "true") {
     return {
       ok: false,
+      code: "INITIAL_IMPORT_INCOMPLETE",
       error: "Initial profile import is not complete"
     };
   }
 
-  const currentState = await getProfileMeta(
-    env, "rescan_state", "idle"
-  );
+  const startedAt = new Date().toISOString();
+  const jobId = crypto.randomUUID();
 
-  if (currentState === "running") {
-    return {
-      ok: false,
-      error: "A profile rescan is already running"
-    };
-  }
-
-  const now = new Date().toISOString();
-
-  // The state transition is conditional. This prevents a
-  // second request from starting another rescan while one
-  // is already marked as running.
+  // Initialise the state row if this is the first rescan.
   await env.DB.prepare(`
     INSERT INTO profile_import_meta (key, value)
     VALUES ('rescan_state', 'idle')
     ON CONFLICT(key) DO NOTHING
   `).run();
 
+  // Atomic acquisition: only one start request can change
+  // the state to running.
   const lock = await env.DB.prepare(`
     UPDATE profile_import_meta
     SET value = 'running'
     WHERE key = 'rescan_state'
       AND value != 'running'
+      AND EXISTS (
+        SELECT 1
+        FROM profile_import_meta
+        WHERE key = 'import_complete'
+          AND value = 'true'
+      )
   `).run();
 
   if (Number(lock.meta?.changes || 0) !== 1) {
     return {
       ok: false,
+      code: "RESCAN_ALREADY_RUNNING",
       error: "A profile rescan is already running"
     };
   }
 
-  try {
-    await env.DB.batch([
-      metaStatement(env, "rescan_last_account", ""),
-      metaStatement(env, "rescan_accounts_scanned", "0"),
-      metaStatement(env, "rescan_locations_found", "0"),
-      metaStatement(env, "rescan_locations_removed", "0"),
-      metaStatement(env, "rescan_started_at", now),
-      metaStatement(env, "rescan_last_run", ""),
-      metaStatement(env, "rescan_last_error", "")
-    ]);
-  } catch (error) {
-    // Do not automatically clear the running flag here:
-    // another invocation might already have begun work.
-    throw error;
-  }
+  // Initialise a new run. The last successful completion
+  // timestamp is deliberately NOT reset.
+  await env.DB.batch([
+    metaStatement(env, "rescan_job_id", jobId),
+    metaStatement(env, "rescan_last_account", ""),
+    metaStatement(env, "rescan_accounts_scanned", "0"),
+    metaStatement(env, "rescan_locations_found", "0"),
+    metaStatement(env, "rescan_locations_removed", "0"),
+    metaStatement(env, "rescan_started_at", startedAt),
+    metaStatement(env, "rescan_completed_at", ""),
+    metaStatement(env, "rescan_last_run", ""),
+    metaStatement(env, "rescan_last_error", "")
+  ]);
 
   return {
     ok: true,
     version: VERSION,
+    job_id: jobId,
     state: "running",
-    started_at: now,
+    started_at: startedAt,
     accounts_per_scheduled_run: PROFILE_ACCOUNTS_PER_RUN
   };
 }
@@ -1004,10 +986,15 @@ async function rescanProfileBatch(env, maxAccounts) {
   );
 
   if (state !== "running") {
-    return {
-      processed: 0,
-      state
-    };
+    return { processed: 0, state };
+  }
+
+  const jobId = await getProfileMeta(
+    env, "rescan_job_id", ""
+  );
+
+  if (!jobId) {
+    throw new Error("Rescan job ID is missing");
   }
 
   let lastAccount = await getProfileMeta(
@@ -1064,8 +1051,6 @@ async function rescanProfileBatch(env, maxAccounts) {
         .map(account => [account.name, account])
     );
 
-    // Do not silently treat missing RPC results as profiles
-    // without a location. That could destroy valid records.
     const missingNames = batchNames.filter(
       name => !accountsByName.has(name)
     );
@@ -1081,88 +1066,104 @@ async function rescanProfileBatch(env, maxAccounts) {
       const account = accountsByName.get(name);
       const location = extractProfileLocation(account);
 
+      const statements = [];
+      let removed = 0;
+
       if (location) {
-        await saveProfileLocation(
-          env,
-          name,
-          location,
-          account.last_account_update || null
+        const normalized = normalizeLocation(location);
+        const key = makeLocationKey(normalized);
+
+        statements.push(
+          locationMatchInsertStatement(env, key, location)
         );
-
-        locationsFound++;
+        statements.push(
+          profileLocationUpsertStatement(
+            env,
+            name,
+            location,
+            normalized,
+            key,
+            account.last_account_update || null
+          )
+        );
       } else {
-        // Remove only the profile's current location.
-        // Historical administrator overrides are retained.
-        const deletion = await env.DB.prepare(`
-          DELETE FROM profile_locations
-          WHERE account = ?
-        `).bind(name).run();
-
-        locationsRemoved += Number(
-          deletion.meta?.changes || 0
+        statements.push(
+          env.DB.prepare(`
+            DELETE FROM profile_locations
+            WHERE account = ?
+          `).bind(name)
         );
       }
 
-      // Persist progress after successfully processing
-      // the account, allowing a failed run to resume.
-      await setProfileMeta(
-        env, "rescan_last_account", name
+      // These metadata changes and the profile change
+      // are committed together in one D1 transaction.
+      statements.push(
+        env.DB.prepare(`
+          UPDATE profile_import_meta
+          SET value = ?
+          WHERE key = 'rescan_last_account'
+        `).bind(name)
       );
 
-      lastAccount = name;
+      statements.push(
+        incrementProfileMetaStatement(
+          env, "rescan_accounts_scanned", 1
+        )
+      );
+
+      if (location) {
+        statements.push(
+          incrementProfileMetaStatement(
+            env, "rescan_locations_found", 1
+          )
+        );
+      } else {
+        // Count actual deleted rows using changes()
+        // immediately after the DELETE, before other
+        // modifications alter the connection counter.
+        // A separate statement below is not reliable
+        // for this, so removal is recorded from the
+        // DELETE result after the transaction.
+      }
+
+      const results = await env.DB.batch(statements);
+
+      if (!location) {
+        removed = Number(results[0]?.meta?.changes || 0);
+
+        if (removed) {
+          await incrementProfileMeta(
+            env, "rescan_locations_removed", removed
+          );
+        }
+      }
+
       scanned++;
+      lastAccount = name;
+
+      if (location) locationsFound++;
+      locationsRemoved += removed;
     }
   }
 
-  const previousScanned = Number(
-    await getProfileMeta(
-      env, "rescan_accounts_scanned", "0"
-    )
-  ) || 0;
-
-  const previousFound = Number(
-    await getProfileMeta(
-      env, "rescan_locations_found", "0"
-    )
-  ) || 0;
-
-  const previousRemoved = Number(
-    await getProfileMeta(
-      env, "rescan_locations_removed", "0"
-    )
-  ) || 0;
-
   const now = new Date().toISOString();
 
-  const statements = [
-    metaStatement(
-      env,
-      "rescan_accounts_scanned",
-      String(previousScanned + scanned)
-    ),
-    metaStatement(
-      env,
-      "rescan_locations_found",
-      String(previousFound + locationsFound)
-    ),
-    metaStatement(
-      env,
-      "rescan_locations_removed",
-      String(previousRemoved + locationsRemoved)
-    ),
-    metaStatement(env, "rescan_last_run", now)
-  ];
-
   if (reachedEnd) {
-    statements.push(
+    // Completion is recorded only after the last account
+    // has been processed successfully.
+    await env.DB.batch([
       metaStatement(env, "rescan_state", "completed"),
-      metaStatement(env, "rescan_completed_at", now)
-    );
+      metaStatement(env, "rescan_completed_at", now),
+      metaStatement(env, "rescan_last_completed_at", now),
+      metaStatement(env, "rescan_last_run", now),
+      metaStatement(env, "rescan_last_error", "")
+    ]);
+  } else {
+    await setProfileMeta(env, "rescan_last_run", now);
   }
 
-  await env.DB.batch(statements);
-
   return {
+    job_id: jobId,
     processed: scanned,
     locations_found: locationsFound,
     locations_removed: locationsRemoved,
@@ -1171,12 +1172,30 @@ async function rescanProfileBatch(env, maxAccounts) {
   };
 }
 
+function incrementProfileMetaStatement(env, key, amount) {
+  return env.DB.prepare(`
+    INSERT INTO profile_import_meta (key, value)
+    VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET
+      value = CAST(
+        CAST(profile_import_meta.value AS INTEGER) + ?
+        AS TEXT
+      )
+  `).bind(key, String(amount), amount);
+}
+
+async function incrementProfileMeta(env, key, amount) {
+  await incrementProfileMetaStatement(
+    env, key, amount
+  ).run();
+}
+
 export async function getProfileRescanStatus(env) {
   const result = await env.DB.prepare(`
     SELECT key, value
     FROM profile_import_meta
-    WHERE key LIKE ?
-  `).bind(`${RESCAN_PREFIX}%`).all();
+    WHERE key LIKE 'rescan_%'
+  `).all();
 
   const meta = Object.fromEntries(
     result.results.map(row => [row.key, row.value])
@@ -1191,10 +1210,11 @@ export async function getProfileRescanStatus(env) {
     version: VERSION,
     available: importComplete === "true",
     state: meta.rescan_state || "idle",
+    job_id: meta.rescan_job_id || "",
     started_at: meta.rescan_started_at || "",
     completed_at: meta.rescan_completed_at || "",
     last_completed_full_scan:
-      meta.rescan_completed_at || "",
+      meta.rescan_last_completed_at || "",
     last_account: meta.rescan_last_account || "",
     accounts_scanned: Number(
       meta.rescan_accounts_scanned || 0
@@ -1308,17 +1328,8 @@ function makeLocationKey(value) {
     .toLocaleLowerCase("en-US");
 }
 
-async function saveProfileLocation(
-  env, account, rawLocation, lastAccountUpdate
-) {
-  const normalized = normalizeLocation(rawLocation);
-  const key = makeLocationKey(normalized);
-
-  if (!key) {
-    return;
-  }
-
-  await env.DB.prepare(`
+function locationMatchInsertStatement(env, key, rawLocation) {
+  return env.DB.prepare(`
     INSERT OR IGNORE INTO location_matches (
       location_key,
       original_example,
@@ -1326,10 +1337,13 @@ async function saveProfileLocation(
       source
     )
     VALUES (?, ?, 'pending', 'hive_profile')
-  `).bind(key, rawLocation).run();
+  `).bind(key, rawLocation);
+}
 
-  // Overrides apply only to their original match_id.
-  await env.DB.prepare(`
+function profileLocationUpsertStatement(
+  env, account, rawLocation, normalized, key, lastAccountUpdate
+) {
+  return env.DB.prepare(`
     INSERT INTO profile_locations (
       account,
       raw_location,
@@ -1375,7 +1389,28 @@ async function saveProfileLocation(
     account,
     lastAccountUpdate,
     key
-  ).run();
+  );
+}
+
+async function saveProfileLocation(
+  env, account, rawLocation, lastAccountUpdate
+) {
+  const normalized = normalizeLocation(rawLocation);
+  const key = makeLocationKey(normalized);
+
+  if (!key) return;
+
+  await env.DB.batch([
+    locationMatchInsertStatement(env, key, rawLocation),
+    profileLocationUpsertStatement(
+      env,
+      account,
+      rawLocation,
+      normalized,
+      key,
+      lastAccountUpdate
+    )
+  ]);
 }
 
 // ============================================================
@@ -1505,9 +1540,7 @@ async function classifyPendingLocations(env, limit) {
         classification.source,
         row.id
       ),
-      profileStatusSyncStatement(
-        env, row.id
-      )
+      profileStatusSyncStatement(env, row.id)
     ]);
 
     if (Number(results[0]?.meta?.changes || 0) === 0) {
@@ -1705,9 +1738,7 @@ async function geocodeAmbiguousLocations(env, limit) {
             safeResult.source,
             row.id
           ),
-          profileStatusSyncStatement(
-            env, row.id
-          )
+          profileStatusSyncStatement(env, row.id)
         ]);
 
         if (Number(results[0]?.meta?.changes || 0) > 0) {
@@ -1728,9 +1759,7 @@ async function geocodeAmbiguousLocations(env, limit) {
             safeResult.source || "geonames_v4",
             row.id
           ),
-          profileStatusSyncStatement(
-            env, row.id
-          )
+          profileStatusSyncStatement(env, row.id)
         ]);
 
         if (Number(results[0]?.meta?.changes || 0) > 0) {
@@ -1964,7 +1993,7 @@ async function getProfileImportStatus(env) {
       PROFILE_ACCOUNTS_PER_RUN,
     rescan_state: meta.rescan_state || "idle",
     last_completed_full_scan:
-      meta.rescan_completed_at || ""
+      meta.rescan_last_completed_at || ""
   };
 }
 
