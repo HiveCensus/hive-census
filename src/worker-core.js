@@ -1,7 +1,8 @@
+
 import { classifyLocation, getClassifierVersion } from "./location-classifier.js";
 import { geocodeLocation, getGeocoderVersion } from "./location-geocoder.js";
 
-const VERSION = "0.9.6";
+const VERSION = "0.9.7";
 const HIVE_RPC = "https://api.hive.blog";
 const CENSUS_ID = "hive_census";
 const PROTOCOL_VERSION = 1;
@@ -207,7 +208,8 @@ export default {
           FROM profile_locations p
           JOIN location_matches m
             ON m.id = p.match_id
-          WHERE m.status = 'matched'
+          WHERE p.match_status = 'matched'
+            AND m.status = 'matched'
             AND m.lat IS NOT NULL
             AND m.lon IS NOT NULL
           GROUP BY
@@ -982,6 +984,12 @@ async function saveProfileLocation(
     VALUES (?, ?, 'pending', 'hive_profile')
   `).bind(key, rawLocation).run();
 
+  // An individual override is effective only when its match_id
+  // refers to the profile's current location. An override for
+  // another match_id remains stored as historical information.
+  //
+  // Using the match_id and status from the same location_matches
+  // record prevents mixing the old decision with a new location.
   await env.DB.prepare(`
     INSERT INTO profile_locations (
       account,
@@ -993,35 +1001,31 @@ async function saveProfileLocation(
       last_account_update,
       fetched_at
     )
-    VALUES (
-      ?, ?, ?, ?,
-      (
-        SELECT id
-        FROM location_matches
-        WHERE location_key = ?
-      ),
-      (
-        SELECT status
-        FROM location_matches
-        WHERE location_key = ?
+    SELECT
+      ?,
+      ?,
+      ?,
+      ?,
+      m.id,
+      COALESCE(
+        (
+          SELECT o.status
+          FROM profile_location_overrides o
+          WHERE o.account = ?
+            AND o.match_id = m.id
+        ),
+        m.status
       ),
       ?,
       CURRENT_TIMESTAMP
-    )
+    FROM location_matches m
+    WHERE m.location_key = ?
     ON CONFLICT(account) DO UPDATE SET
       raw_location = excluded.raw_location,
       normalized_location = excluded.normalized_location,
       location_key = excluded.location_key,
       match_id = excluded.match_id,
-      match_status = CASE
-        WHEN EXISTS (
-          SELECT 1
-          FROM profile_location_overrides o
-          WHERE o.account = excluded.account
-        )
-        THEN profile_locations.match_status
-        ELSE excluded.match_status
-      END,
+      match_status = excluded.match_status,
       last_account_update = excluded.last_account_update,
       fetched_at = CURRENT_TIMESTAMP
   `).bind(
@@ -1029,9 +1033,9 @@ async function saveProfileLocation(
     rawLocation,
     normalized,
     key,
-    key,
-    key,
-    lastAccountUpdate
+    account,
+    lastAccountUpdate,
+    key
   ).run();
 }
 
@@ -1106,6 +1110,7 @@ async function classifyPendingLocations(env, limit) {
     SELECT id, original_example
     FROM location_matches
     WHERE status = 'pending'
+      AND COALESCE(source, '') != 'admin_manual'
     ORDER BY id
     LIMIT ?
   `).bind(limit).all();
@@ -1128,8 +1133,9 @@ async function classifyPendingLocations(env, limit) {
       );
     }
 
-    // Synchronize only profiles of this location.
-    // Both statements execute in one D1 transaction.
+    // Both statements run in a single D1 batch transaction.
+    // The second statement reads the current status from the
+    // database and never replaces an individual override.
     const results = await env.DB.batch([
       env.DB.prepare(`
         UPDATE location_matches
@@ -1148,6 +1154,7 @@ async function classifyPendingLocations(env, limit) {
           updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
           AND status = 'pending'
+          AND COALESCE(source, '') != 'admin_manual'
       `).bind(
         classification.status,
         classification.location_type,
@@ -1164,8 +1171,7 @@ async function classifyPendingLocations(env, limit) {
       ),
       profileStatusSyncStatement(
         env,
-        row.id,
-        classification.status
+        row.id
       )
     ]);
 
@@ -1288,6 +1294,7 @@ async function geocodeAmbiguousLocations(env, limit) {
     LEFT JOIN location_geocode_attempts a
       ON a.location_key = m.location_key
     WHERE m.status = 'ambiguous'
+      AND COALESCE(m.source, '') != 'admin_manual'
       AND (
         a.location_key IS NULL
         OR (
@@ -1336,7 +1343,7 @@ async function geocodeAmbiguousLocations(env, limit) {
             UPDATE location_matches
             SET
               status = 'matched',
-              location_type = ?,
+              location_type = COALESCE(?, location_type),
               country = ?,
               country_name = ?,
               region = ?,
@@ -1349,6 +1356,7 @@ async function geocodeAmbiguousLocations(env, limit) {
               updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
               AND status = 'ambiguous'
+              AND COALESCE(source, '') != 'admin_manual'
           `).bind(
             safeResult.location_type,
             safeResult.country,
@@ -1363,7 +1371,7 @@ async function geocodeAmbiguousLocations(env, limit) {
             row.id
           ),
           profileStatusSyncStatement(
-            env, row.id, "matched"
+            env, row.id
           )
         ]);
 
@@ -1380,12 +1388,13 @@ async function geocodeAmbiguousLocations(env, limit) {
               updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
               AND status = 'ambiguous'
+              AND COALESCE(source, '') != 'admin_manual'
           `).bind(
             safeResult.source || "geonames_v4",
             row.id
           ),
           profileStatusSyncStatement(
-            env, row.id, "rejected"
+            env, row.id
           )
         ]);
 
@@ -1530,32 +1539,35 @@ async function recordGeocodeAttempt(
 }
 
 // ============================================================
-// OPTIMIZED PROFILE STATUS SYNCHRONIZATION
+// PROFILE STATUS SYNCHRONIZATION
 // ============================================================
 
-function profileStatusSyncStatement(env, matchId, status) {
+function profileStatusSyncStatement(env, matchId) {
   return env.DB.prepare(`
     UPDATE profile_locations
-    SET match_status = ?
+    SET match_status = (
+      SELECT m.status
+      FROM location_matches m
+      WHERE m.id = profile_locations.match_id
+    )
     WHERE match_id = ?
-      AND match_status != ?
       AND EXISTS (
         SELECT 1
         FROM location_matches m
         WHERE m.id = profile_locations.match_id
-          AND m.status = ?
       )
       AND NOT EXISTS (
         SELECT 1
         FROM profile_location_overrides o
         WHERE o.account = profile_locations.account
+          AND o.match_id = profile_locations.match_id
       )
-  `).bind(
-    status,
-    matchId,
-    status,
-    status
-  );
+      AND match_status IS NOT (
+        SELECT m.status
+        FROM location_matches m
+        WHERE m.id = profile_locations.match_id
+      )
+  `).bind(matchId);
 }
 
 // ============================================================
@@ -1681,6 +1693,7 @@ async function getGeocoderStatus(env) {
     LEFT JOIN location_geocode_attempts a
       ON a.location_key = m.location_key
     WHERE m.status = 'ambiguous'
+      AND COALESCE(m.source, '') != 'admin_manual'
       AND a.location_key IS NULL
   `).first();
 
