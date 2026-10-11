@@ -186,6 +186,21 @@ th, td {
 }
 .search-tools > div { flex: 1; min-width: 0; }
 .search-tools button { flex-shrink: 0; }
+.progress {
+  width: 100%;
+  height: 15px;
+  margin-top: 15px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #111c2b;
+  border: 1px solid #34465e;
+}
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: #287f60;
+  transition: width .25s ease;
+}
 [hidden] { display: none !important; }
 @media(max-width:550px) {
   .form-grid { grid-template-columns: 1fr; }
@@ -285,6 +300,83 @@ th, td {
     <dt>Accounts per run</dt><dd id="accountsPerRun">—</dd>
     <dt>Last error</dt><dd id="profileError">—</dd>
   </dl>
+</section>
+
+<section class="panel" id="rescanPanel">
+  <div class="heading">
+    <h2>Full Profile Rescan</h2>
+    <span id="rescanBadge" class="pill">Unknown</span>
+  </div>
+  <p>
+    A full rescan refreshes profile locations from the Hive blockchain.
+    It preserves the original import cursor and existing manual
+    location classifications.
+  </p>
+  <div class="metrics">
+    <div class="metric">
+      <div class="metric-label">Accounts rescanned</div>
+      <div class="metric-value" id="rescanAccounts">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Locations found</div>
+      <div class="metric-value" id="rescanFound">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Locations removed</div>
+      <div class="metric-value" id="rescanRemoved">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Accounts per run</div>
+      <div class="metric-value" id="rescanBatchSize">—</div>
+    </div>
+  </div>
+
+  <div class="progress"
+       id="rescanProgress"
+       role="progressbar"
+       aria-label="Profile rescan progress"
+       aria-valuemin="0"
+       aria-valuemax="100"
+       aria-valuenow="0">
+    <div class="progress-fill" id="rescanProgressFill"></div>
+  </div>
+  <p class="small muted" id="rescanProgressText">
+    Waiting for rescan status...
+  </p>
+
+  <dl class="details">
+    <dt>Last completed full scan</dt>
+    <dd id="rescanLastCompleted">—</dd>
+    <dt>Current scan started</dt>
+    <dd id="rescanStarted">—</dd>
+    <dt>Current scan completed</dt>
+    <dd id="rescanCompleted">—</dd>
+    <dt>Last processed account</dt>
+    <dd id="rescanLastAccount">—</dd>
+    <dt>Last processing run</dt>
+    <dd id="rescanLastRun">—</dd>
+    <dt>Job ID</dt>
+    <dd id="rescanJobId">—</dd>
+    <dt>Last error</dt>
+    <dd id="rescanError">—</dd>
+  </dl>
+
+  <div class="actions">
+    <button id="refreshRescanButton" class="secondary">
+      Refresh rescan status
+    </button>
+    <button id="startRescanButton" class="green" disabled>
+      Start full rescan
+    </button>
+  </div>
+
+  <div id="rescanMessage"
+       class="status"
+       role="status"
+       aria-live="polite">
+    Rescan initialization is temporarily disabled pending
+    server-side concurrency safeguards.
+  </div>
 </section>
 
 <section class="panel">
@@ -540,7 +632,11 @@ const KEYCHAIN_TIMEOUT_MS = 45000;
 const API_TIMEOUT_MS = 20000;
 const REVIEW_PAGE_SIZE = 20;
 const SEARCH_DEBOUNCE_MS = 400;
-const REQUIRED_ADMIN_API_VERSION = "0.2.3";
+const REQUIRED_ADMIN_API_VERSION = "0.2.4";
+
+// Do not enable until the server-side rescan implementation
+// has been audited for atomicity and concurrent execution.
+const RESCAN_START_ENABLED = false;
 
 const $ = id => document.getElementById(id);
 
@@ -549,6 +645,8 @@ let authenticated = false;
 let loadingDashboard = false;
 let loadingReview = false;
 let savingResolution = false;
+let loadingRescan = false;
+let startingRescan = false;
 let logLines = [];
 
 let reviewOffset = 0;
@@ -559,6 +657,8 @@ let reviewSearchTimer = null;
 let reviewRequestGeneration = 0;
 let reviewApiCompatible = false;
 let reviewApiVersion = null;
+let lastProfileStatus = null;
+let lastRescanStatus = null;
 
 function log(event) {
   logLines.push(`[${new Date().toISOString()}] ${event}`);
@@ -729,6 +829,7 @@ function renderIndexer(d) {
 }
 
 function renderProfiles(d) {
+  lastProfileStatus = d;
   badge(
     "profileBadge",
     d.import_complete ? "Complete" : "Importing",
@@ -742,6 +843,7 @@ function renderProfiles(d) {
   display("lastImportRun", date(d.last_import_run));
   display("accountsPerRun", num(d.accounts_per_scheduled_run));
   display("profileError", d.last_import_error || "None");
+  updateRescanControls();
 }
 
 function renderClassifier(d) {
@@ -777,6 +879,190 @@ function renderGeocoder(d) {
   rows("geocoderAttempts", d.attempts, ["outcome", "count"]);
 }
 
+// ============================================================
+// RESCAN DASHBOARD
+// ============================================================
+
+function updateRescanControls() {
+  const state = lastRescanStatus?.state || "idle";
+  const initialImportComplete =
+    lastProfileStatus?.import_complete === true;
+
+  const canStart =
+    RESCAN_START_ENABLED &&
+    authenticated &&
+    !loadingRescan &&
+    !startingRescan &&
+    initialImportComplete &&
+    lastRescanStatus?.available === true &&
+    state !== "running";
+
+  $("startRescanButton").disabled = !canStart;
+  $("refreshRescanButton").disabled =
+    !authenticated || loadingRescan || startingRescan;
+
+  if (!RESCAN_START_ENABLED) {
+    display(
+      "rescanMessage",
+      "Rescan initiation is temporarily disabled pending " +
+      "server-side concurrency safeguards. Status monitoring is available."
+    );
+    $("rescanMessage").className = "status";
+  } else if (!initialImportComplete) {
+    display(
+      "rescanMessage",
+      "Initial profile import must finish before a full rescan can start."
+    );
+    $("rescanMessage").className = "status";
+  } else if (state === "running") {
+    display(
+      "rescanMessage",
+      "Full profile rescan is running in scheduled batches."
+    );
+    $("rescanMessage").className = "status success";
+  } else {
+    display(
+      "rescanMessage",
+      "A full profile rescan can be started manually."
+    );
+    $("rescanMessage").className = "status";
+  }
+}
+
+function renderRescan(d) {
+  lastRescanStatus = d;
+
+  const state = d.state || "idle";
+  badge(
+    "rescanBadge",
+    !d.available ? "Waiting for import" :
+      state === "running" ? "Running" :
+      state === "completed" ? "Completed" :
+      state.replaceAll("_", " "),
+    state === "completed" ? "good" :
+      state === "running" || !d.available ? "warn" :
+      d.last_error ? "bad" : ""
+  );
+
+  display("rescanAccounts", num(d.accounts_scanned));
+  display("rescanFound", num(d.locations_found));
+  display("rescanRemoved", num(d.locations_removed));
+  display("rescanBatchSize", num(d.accounts_per_scheduled_run));
+  display("rescanLastCompleted", date(d.last_completed_full_scan));
+  display("rescanStarted", date(d.started_at));
+  display("rescanCompleted", date(d.completed_at));
+  display("rescanLastAccount", d.last_account);
+  display("rescanLastRun", date(d.last_run));
+  display("rescanJobId", d.job_id);
+  display("rescanError", d.last_error || "None");
+
+  // Progress is estimated against the account count from the
+  // initial import, not an authoritative total from Hive.
+  const estimatedTotal =
+    lastProfileStatus?.import_complete === true
+      ? Number(lastProfileStatus.accounts_scanned)
+      : 0;
+
+  const scanned = Number(d.accounts_scanned) || 0;
+
+  const percentage = estimatedTotal > 0
+    ? Math.min(100, Math.max(0, scanned / estimatedTotal * 100))
+    : 0;
+
+  $("rescanProgressFill").style.width =
+    percentage.toFixed(1) + "%";
+
+  $("rescanProgress").setAttribute(
+    "aria-valuenow",
+    String(Math.round(percentage))
+  );
+
+  if (estimatedTotal > 0) {
+    display(
+      "rescanProgressText",
+      `${percentage.toFixed(1)}% estimated — ` +
+      `${num(scanned)} of approximately ${num(estimatedTotal)} accounts.`
+    );
+  } else {
+    display(
+      "rescanProgressText",
+      "Progress percentage will be available after the initial import."
+    );
+  }
+
+  updateRescanControls();
+}
+
+async function refreshRescan() {
+  if (!authenticated || loadingRescan) return;
+
+  loadingRescan = true;
+  updateRescanControls();
+
+  try {
+    const data = await api(
+      "/api/admin/profiles/rescan/status"
+    );
+    renderRescan(data);
+  } catch (error) {
+    badge("rescanBadge", "Unavailable", "bad");
+    $("rescanMessage").textContent =
+      "Could not load rescan status: " + error.message;
+    $("rescanMessage").className = "status error";
+    log("Rescan status failed: " + error.message);
+  } finally {
+    loadingRescan = false;
+    updateRescanControls();
+  }
+}
+
+async function startRescan() {
+  if (!RESCAN_START_ENABLED) return;
+  if (!authenticated || startingRescan) return;
+  if (!lastProfileStatus?.import_complete) return;
+  if (!lastRescanStatus?.available) return;
+  if (lastRescanStatus.state === "running") return;
+
+  const confirmed = window.confirm(
+    "Start a full profile rescan?\n\n" +
+    "This will revisit Hive accounts in scheduled batches. " +
+    "The process may take several weeks.\n\n" +
+    "Existing manual classifications will be preserved."
+  );
+
+  if (!confirmed) return;
+
+  startingRescan = true;
+  updateRescanControls();
+
+  try {
+    const result = await api(
+      "/api/admin/profiles/rescan/start",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ confirm: true })
+      }
+    );
+
+    log(
+      "Full rescan started: " +
+      (result.job_id || "unknown job")
+    );
+
+    await refreshRescan();
+  } catch (error) {
+    $("rescanMessage").textContent =
+      "Could not start rescan: " + error.message;
+    $("rescanMessage").className = "status error";
+  } finally {
+    startingRescan = false;
+    updateRescanControls();
+  }
+}
+
 async function refreshDashboard() {
   if (!authenticated || loadingDashboard) return;
 
@@ -788,7 +1074,8 @@ async function refreshDashboard() {
     ["/api/indexer/status", renderIndexer, "indexerBadge"],
     ["/api/profiles/status", renderProfiles, "profileBadge"],
     ["/api/profiles/classifier/status", renderClassifier, "classifierBadge"],
-    ["/api/profiles/geocoder/status", renderGeocoder, "geocoderBadge"]
+    ["/api/profiles/geocoder/status", renderGeocoder, "geocoderBadge"],
+    ["/api/admin/profiles/rescan/status", renderRescan, "rescanBadge"]
   ];
 
   try {
@@ -799,6 +1086,7 @@ async function refreshDashboard() {
 
     results.forEach((result, index) => {
       const [path, render, badgeId] = endpoints[index];
+
       if (result.status === "fulfilled") {
         try {
           render(result.value);
@@ -818,9 +1106,14 @@ async function refreshDashboard() {
         ? "Errors:\n" + errors.join("\n")
         : "All operational endpoints responded successfully."
     );
+
     $("dashboardMessage").className =
       "status " + (errors.length ? "error" : "success");
-    display("dashboardUpdated", "Last refreshed: " + new Date().toLocaleString());
+
+    display(
+      "dashboardUpdated",
+      "Last refreshed: " + new Date().toLocaleString()
+    );
   } finally {
     loadingDashboard = false;
     $("refreshDataButton").disabled = false;
@@ -828,7 +1121,7 @@ async function refreshDashboard() {
 }
 
 // ============================================================
-// LOCATION REVIEW — SERVER-SIDE SEARCH
+// LOCATION REVIEW
 // ============================================================
 
 function setReviewStatus(text, type = "") {
@@ -894,13 +1187,17 @@ function renderReviewList() {
     button.className = "location-item";
     button.dataset.id = String(item.id);
 
-    if (selectedLocation && Number(selectedLocation.id) === Number(item.id)) {
+    if (
+      selectedLocation &&
+      Number(selectedLocation.id) === Number(item.id)
+    ) {
       button.classList.add("selected");
     }
 
     const title = document.createElement("span");
     title.className = "location-title";
-    title.textContent = item.original_example || item.location_key || "—";
+    title.textContent =
+      item.original_example || item.location_key || "—";
 
     const meta = document.createElement("span");
     meta.className = "location-meta";
@@ -910,14 +1207,22 @@ function renderReviewList() {
       ` · ${item.source || "unknown source"}`;
 
     button.append(title, meta);
-    button.addEventListener("click", () => selectLocation(item));
+    button.addEventListener(
+      "click",
+      () => selectLocation(item)
+    );
     list.appendChild(button);
   }
 }
 
 function updatePagination() {
-  const page = Math.floor(reviewOffset / REVIEW_PAGE_SIZE) + 1;
-  const totalPages = Math.max(1, Math.ceil(reviewTotal / REVIEW_PAGE_SIZE));
+  const page =
+    Math.floor(reviewOffset / REVIEW_PAGE_SIZE) + 1;
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(reviewTotal / REVIEW_PAGE_SIZE)
+  );
 
   display("reviewTotal", num(reviewTotal));
   display("reviewPageNumber", `${page} / ${totalPages}`);
@@ -929,10 +1234,13 @@ function updatePagination() {
   );
 
   $("previousPage").disabled =
-    loadingReview || !reviewApiCompatible || reviewOffset === 0;
+    loadingReview ||
+    !reviewApiCompatible ||
+    reviewOffset === 0;
 
   $("nextPage").disabled =
-    loadingReview || !reviewApiCompatible ||
+    loadingReview ||
+    !reviewApiCompatible ||
     reviewOffset + REVIEW_PAGE_SIZE >= reviewTotal;
 
   display(
@@ -950,8 +1258,11 @@ function compareVersions(actual, required) {
   const b = String(required).split(".").map(Number);
 
   if (
-    a.length !== 3 || b.length !== 3 ||
-    [...a, ...b].some(n => !Number.isSafeInteger(n) || n < 0)
+    a.length !== 3 ||
+    b.length !== 3 ||
+    [...a, ...b].some(
+      n => !Number.isSafeInteger(n) || n < 0
+    )
   ) {
     return -1;
   }
@@ -960,17 +1271,25 @@ function compareVersions(actual, required) {
     if (a[i] > b[i]) return 1;
     if (a[i] < b[i]) return -1;
   }
+
   return 0;
 }
 
 function checkAdminApiVersion(data) {
-  const version = typeof data.version === "string" ? data.version : null;
+  const version =
+    typeof data.version === "string"
+      ? data.version
+      : null;
+
   reviewApiVersion = version;
   display("adminApiVersion", version || "Unknown");
 
   reviewApiCompatible =
     version !== null &&
-    compareVersions(version, REQUIRED_ADMIN_API_VERSION) >= 0;
+    compareVersions(
+      version,
+      REQUIRED_ADMIN_API_VERSION
+    ) >= 0;
 
   if (!reviewApiCompatible) {
     log(
@@ -992,12 +1311,14 @@ async function loadReviewQueue() {
   if (!authenticated || savingResolution) return;
 
   const generation = ++reviewRequestGeneration;
+
   loadingReview = true;
   $("loadReviewButton").disabled = true;
   $("previousPage").disabled = true;
   $("nextPage").disabled = true;
 
   const search = $("reviewSearch").value.trim();
+
   const params = new URLSearchParams({
     limit: String(REVIEW_PAGE_SIZE),
     offset: String(reviewOffset),
@@ -1012,10 +1333,16 @@ async function loadReviewQueue() {
 
   try {
     const data = await api(
-      "/api/admin/locations/ambiguous?" + params.toString()
+      "/api/admin/locations/ambiguous?" +
+      params.toString()
     );
 
-    if (generation !== reviewRequestGeneration || !authenticated) return;
+    if (
+      generation !== reviewRequestGeneration ||
+      !authenticated
+    ) {
+      return;
+    }
 
     if (!Array.isArray(data.locations)) {
       throw new Error("Invalid review queue response");
@@ -1028,9 +1355,9 @@ async function loadReviewQueue() {
       renderReviewList();
 
       setReviewStatus(
-        "Administrator API " + (reviewApiVersion || "unknown") +
-        " does not support verified database-wide search. " +
-        "Deploy src/admin-api.js v0.2.3 or newer.",
+        "Administrator API " +
+        (reviewApiVersion || "unknown") +
+        " is incompatible. Deploy v0.2.4 or newer.",
         "error"
       );
       return;
@@ -1043,19 +1370,31 @@ async function loadReviewQueue() {
     }
 
     const total = Number(data.total);
-    if (!Number.isSafeInteger(total) || total < 0) {
-      throw new Error("Invalid result count returned by API");
+
+    if (
+      !Number.isSafeInteger(total) ||
+      total < 0
+    ) {
+      throw new Error(
+        "Invalid result count returned by API"
+      );
     }
 
     reviewTotal = total;
     reviewLocations = data.locations;
 
-    if (reviewOffset >= reviewTotal && reviewOffset > 0) {
+    if (
+      reviewOffset >= reviewTotal &&
+      reviewOffset > 0
+    ) {
       reviewOffset = Math.max(
         0,
-        Math.floor((Math.max(0, reviewTotal - 1)) / REVIEW_PAGE_SIZE) *
+        Math.floor(
+          Math.max(0, reviewTotal - 1) /
           REVIEW_PAGE_SIZE
+        ) * REVIEW_PAGE_SIZE
       );
+
       await loadReviewQueue();
       return;
     }
@@ -1077,11 +1416,17 @@ async function loadReviewQueue() {
     );
   } catch (error) {
     if (generation !== reviewRequestGeneration) return;
+
     setReviewStatus(
-      "Could not load review queue: " + error.message,
+      "Could not load review queue: " +
+      error.message,
       "error"
     );
-    log("Review queue failed: " + error.message);
+
+    log(
+      "Review queue failed: " +
+      error.message
+    );
   } finally {
     if (generation === reviewRequestGeneration) {
       loadingReview = false;
@@ -1124,39 +1469,77 @@ function clearReviewSearch() {
 // ============================================================
 
 function getMatchPayload() {
-  const country = $("countryCode").value.trim().toUpperCase();
-  const countryName = $("countryName").value.trim();
-  const region = $("regionCode").value.trim();
-  const regionName = $("regionName").value.trim();
-  const city = $("cityName").value.trim();
-  const locationType = $("locationType").value;
-  const latitudeText = $("latitude").value.trim();
-  const longitudeText = $("longitude").value.trim();
+  const country =
+    $("countryCode").value.trim().toUpperCase();
+
+  const countryName =
+    $("countryName").value.trim();
+
+  const region =
+    $("regionCode").value.trim();
+
+  const regionName =
+    $("regionName").value.trim();
+
+  const city =
+    $("cityName").value.trim();
+
+  const locationType =
+    $("locationType").value;
+
+  const latitudeText =
+    $("latitude").value.trim();
+
+  const longitudeText =
+    $("longitude").value.trim();
 
   if (!/^[A-Z]{2}$/.test(country)) {
-    throw new Error("Enter a valid two-letter country code.");
+    throw new Error(
+      "Enter a valid two-letter country code."
+    );
   }
+
   if (!countryName) {
-    throw new Error("Country name is required.");
+    throw new Error(
+      "Country name is required."
+    );
   }
+
   if (!latitudeText || !longitudeText) {
-    throw new Error("Latitude and longitude are required.");
+    throw new Error(
+      "Latitude and longitude are required."
+    );
   }
 
   const lat = Number(latitudeText);
   const lon = Number(longitudeText);
 
   if (
-    !Number.isFinite(lat) || !Number.isFinite(lon) ||
-    lat < -90 || lat > 90 || lon < -180 || lon > 180
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lon) ||
+    lat < -90 ||
+    lat > 90 ||
+    lon < -180 ||
+    lon > 180
   ) {
-    throw new Error("Invalid geographical coordinates.");
+    throw new Error(
+      "Invalid geographical coordinates."
+    );
   }
+
   if (!city) {
-    throw new Error("City or representative city is required.");
+    throw new Error(
+      "City or representative city is required."
+    );
   }
-  if (locationType === "region_proxy" && !regionName) {
-    throw new Error("Region name is required for a region proxy.");
+
+  if (
+    locationType === "region_proxy" &&
+    !regionName
+  ) {
+    throw new Error(
+      "Region name is required for a region proxy."
+    );
   }
 
   return {
@@ -1176,70 +1559,122 @@ function getMatchPayload() {
 async function submitResolution(event) {
   event.preventDefault();
 
-  if (!authenticated || !selectedLocation || savingResolution) return;
-
-  let payload;
-  try {
-    payload = $("resolutionAction").value === "reject"
-      ? { id: selectedLocation.id, action: "reject" }
-      : getMatchPayload();
-  } catch (error) {
-    $("resolutionMessage").textContent = error.message;
-    $("resolutionMessage").className = "status error";
+  if (
+    !authenticated ||
+    !selectedLocation ||
+    savingResolution
+  ) {
     return;
   }
 
-  const actionDescription = payload.action === "reject" ? "REJECT" : "MATCH";
+  let payload;
+
+  try {
+    payload = $("resolutionAction").value === "reject"
+      ? {
+          id: selectedLocation.id,
+          action: "reject"
+        }
+      : getMatchPayload();
+  } catch (error) {
+    $("resolutionMessage").textContent =
+      error.message;
+
+    $("resolutionMessage").className =
+      "status error";
+
+    return;
+  }
+
+  const actionDescription =
+    payload.action === "reject"
+      ? "REJECT"
+      : "MATCH";
+
   const confirmation =
     `Confirm ${actionDescription} for:\n\n` +
     `${selectedLocation.original_example}\n\n` +
     `Affected accounts: ${selectedLocation.affected_accounts}\n\n` +
-    (payload.action === "match"
-      ? `Country: ${payload.country_name}\n` +
-        `Region: ${payload.region_name || "—"}\n` +
-        `City: ${payload.city}\n` +
-        `Coordinates: ${payload.lat}, ${payload.lon}\n\n`
-      : "") +
+    (
+      payload.action === "match"
+        ? `Country: ${payload.country_name}\n` +
+          `Region: ${payload.region_name || "—"}\n` +
+          `City: ${payload.city}\n` +
+          `Coordinates: ${payload.lat}, ${payload.lon}\n\n`
+        : ""
+    ) +
     "This decision cannot currently be undone from the administration panel.";
 
   if (!window.confirm(confirmation)) return;
 
   savingResolution = true;
   $("saveResolutionButton").disabled = true;
-  $("resolutionMessage").textContent = "Saving decision...";
-  $("resolutionMessage").className = "status";
+
+  $("resolutionMessage").textContent =
+    "Saving decision...";
+
+  $("resolutionMessage").className =
+    "status";
+
+  let resolvedText = "";
+  let affectedProfiles = 0;
+  let succeeded = false;
 
   try {
-    const result = await api("/api/admin/locations/resolve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+    const result = await api(
+      "/api/admin/locations/resolve",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      }
+    );
+
+    resolvedText =
+      selectedLocation.original_example;
+
+    affectedProfiles =
+      Number(result.affected_profiles || 0);
 
     log(
       `Location ${result.id} resolved: ${result.status}; ` +
-      `${result.affected_profiles} profiles updated`
+      `${affectedProfiles} profiles updated`
     );
 
-    const resolvedText = selectedLocation.original_example;
+    succeeded = true;
     closeResolution();
-
-    await loadReviewQueue();
-    await refreshDashboard();
-
-    setReviewStatus(
-      `Successfully resolved "${resolvedText}". ` +
-      `${num(result.affected_profiles)} profiles updated.`,
-      "success"
-    );
   } catch (error) {
-    $("resolutionMessage").textContent = "Save failed: " + error.message;
-    $("resolutionMessage").className = "status error";
-    log("Resolution failed: " + error.message);
+    $("resolutionMessage").textContent =
+      "Save failed: " + error.message;
+
+    $("resolutionMessage").className =
+      "status error";
+
+    log(
+      "Resolution failed: " +
+      error.message
+    );
   } finally {
+    // Critical fix: allow the review queue to refresh
+    // after a successful resolution.
     savingResolution = false;
     $("saveResolutionButton").disabled = false;
   }
+
+  if (!succeeded) return;
+
+  await Promise.all([
+    loadReviewQueue(),
+    refreshDashboard()
+  ]);
+
+  setReviewStatus(
+    `Successfully resolved "${resolvedText}". ` +
+    `${num(affectedProfiles)} profiles updated.`,
+    "success"
+  );
 }
 
 // ============================================================
@@ -1248,7 +1683,10 @@ async function submitResolution(event) {
 
 async function refreshSession() {
   log("Checking administrator session");
-  const session = await api("/api/admin/session");
+
+  const session = await api(
+    "/api/admin/session"
+  );
 
   authenticated =
     session.authenticated === true &&
@@ -1259,45 +1697,82 @@ async function refreshSession() {
   $("adminPanel").hidden = !authenticated;
 
   if (authenticated) {
-    display("sessionInfo", "Signed in as @" + session.account);
+    display(
+      "sessionInfo",
+      "Signed in as @" + session.account
+    );
+
     setMessage(
-      "Authenticated. Session expires: " + session.expires_at,
+      "Authenticated. Session expires: " +
+      session.expires_at,
       "success"
     );
-    log("Administrator session authenticated");
+
+    log(
+      "Administrator session authenticated"
+    );
   } else {
-    display("sessionInfo", "Not authenticated.");
-    setMessage("Administrator authentication required.");
+    display(
+      "sessionInfo",
+      "Not authenticated."
+    );
+
+    setMessage(
+      "Administrator authentication required."
+    );
+
     clearTimeout(reviewSearchTimer);
     reviewSearchTimer = null;
     invalidateReviewRequests();
     reviewLocations = [];
     reviewTotal = 0;
     closeResolution();
+
+    lastRescanStatus = null;
+    lastProfileStatus = null;
   }
+
+  updateRescanControls();
 
   return authenticated;
 }
 
 function getKeychain() {
-  const keychain = window.hive_keychain;
-  log("Hive Keychain available: " + Boolean(keychain));
+  const keychain =
+    window.hive_keychain;
 
-  if (!keychain || typeof keychain.requestSignBuffer !== "function") {
+  log(
+    "Hive Keychain available: " +
+    Boolean(keychain)
+  );
+
+  if (
+    !keychain ||
+    typeof keychain.requestSignBuffer !== "function"
+  ) {
     throw new Error(
       "Hive Keychain is unavailable. Open this page inside Hive Keychain."
     );
   }
+
   return keychain;
 }
 
-function signChallenge(keychain, account, challengeText) {
+function signChallenge(
+  keychain,
+  account,
+  challengeText
+) {
   return new Promise((resolve, reject) => {
     let settled = false;
     const started = performance.now();
 
     const timeout = setTimeout(
-      () => finish(new Error("Hive Keychain callback timeout.")),
+      () => finish(
+        new Error(
+          "Hive Keychain callback timeout."
+        )
+      ),
       KEYCHAIN_TIMEOUT_MS
     );
 
@@ -1305,14 +1780,20 @@ function signChallenge(keychain, account, challengeText) {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+
       if (error) reject(error);
       else resolve(signature);
     }
 
-    log("Calling Keychain requestSignBuffer");
+    log(
+      "Calling Keychain requestSignBuffer"
+    );
     log("Signing account: @" + account);
     log("Key type: Posting");
-    log("Message length: " + challengeText.length);
+    log(
+      "Message length: " +
+      challengeText.length
+    );
 
     try {
       keychain.requestSignBuffer(
@@ -1320,11 +1801,25 @@ function signChallenge(keychain, account, challengeText) {
         challengeText,
         "Posting",
         result => {
-          const elapsed = ((performance.now() - started) / 1000).toFixed(2);
-          log("Keychain callback received after " + elapsed + "s");
-          log("Keychain success: " + Boolean(result?.success));
+          const elapsed = (
+            (performance.now() - started) /
+            1000
+          ).toFixed(2);
 
-          if (!result || result.success !== true) {
+          log(
+            "Keychain callback received after " +
+            elapsed + "s"
+          );
+
+          log(
+            "Keychain success: " +
+            Boolean(result?.success)
+          );
+
+          if (
+            !result ||
+            result.success !== true
+          ) {
             finish(
               new Error(
                 result?.message ||
@@ -1335,13 +1830,26 @@ function signChallenge(keychain, account, challengeText) {
             return;
           }
 
-          if (typeof result.result !== "string" || !result.result) {
-            finish(new Error("Keychain returned no signature."));
+          if (
+            typeof result.result !== "string" ||
+            !result.result
+          ) {
+            finish(
+              new Error(
+                "Keychain returned no signature."
+              )
+            );
             return;
           }
 
-          log("Signature received successfully");
-          log("Signature length: " + result.result.length);
+          log(
+            "Signature received successfully"
+          );
+          log(
+            "Signature length: " +
+            result.result.length
+          );
+
           finish(null, result.result);
         }
       );
@@ -1353,50 +1861,85 @@ function signChallenge(keychain, account, challengeText) {
 
 async function login() {
   if (busy) return;
+
   setBusy(true);
   log("=== LOGIN STARTED ===");
 
   try {
     const keychain = getKeychain();
-    setMessage("Requesting authentication challenge...");
 
-    const challenge = await api("/api/admin/challenge", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}"
-    });
+    setMessage(
+      "Requesting authentication challenge..."
+    );
+
+    const challenge = await api(
+      "/api/admin/challenge",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: "{}"
+      }
+    );
 
     if (
       challenge.account !== ADMIN_ACCOUNT ||
       typeof challenge.nonce !== "string" ||
       typeof challenge.message !== "string"
     ) {
-      throw new Error("Invalid administrator challenge.");
+      throw new Error(
+        "Invalid administrator challenge."
+      );
     }
 
-    setMessage("Waiting for Hive Keychain signature...");
-    const signature = await signChallenge(
-      keychain, ADMIN_ACCOUNT, challenge.message
+    setMessage(
+      "Waiting for Hive Keychain signature..."
     );
 
-    setMessage("Verifying signature...");
-    await api("/api/admin/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        nonce: challenge.nonce,
-        signature
-      })
-    });
+    const signature = await signChallenge(
+      keychain,
+      ADMIN_ACCOUNT,
+      challenge.message
+    );
+
+    setMessage(
+      "Verifying signature..."
+    );
+
+    await api(
+      "/api/admin/login",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          nonce: challenge.nonce,
+          signature
+        })
+      }
+    );
 
     if (await refreshSession()) {
-      await Promise.all([refreshDashboard(), loadReviewQueue()]);
+      await Promise.all([
+        refreshDashboard(),
+        loadReviewQueue()
+      ]);
     }
 
     log("=== LOGIN COMPLETED ===");
   } catch (error) {
-    log("LOGIN FAILED: " + error.message);
-    setMessage("Login failed: " + error.message, "error");
+    log(
+      "LOGIN FAILED: " +
+      error.message
+    );
+
+    setMessage(
+      "Login failed: " +
+      error.message,
+      "error"
+    );
   } finally {
     setBusy(false);
   }
@@ -1404,18 +1947,29 @@ async function login() {
 
 async function logout() {
   if (busy) return;
+
   setBusy(true);
 
   try {
-    await api("/api/admin/logout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}"
-    });
+    await api(
+      "/api/admin/logout",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: "{}"
+      }
+    );
+
     await refreshSession();
     log("Logout completed");
   } catch (error) {
-    setMessage("Logout failed: " + error.message, "error");
+    setMessage(
+      "Logout failed: " +
+      error.message,
+      "error"
+    );
   } finally {
     setBusy(false);
   }
@@ -1425,95 +1979,195 @@ async function logout() {
 // EVENTS
 // ============================================================
 
-$("loginButton").addEventListener("click", login);
-$("logoutButton").addEventListener("click", logout);
+$("loginButton").addEventListener(
+  "click", login
+);
 
-$("refreshButton").addEventListener("click", async () => {
-  if (busy) return;
-  setBusy(true);
+$("logoutButton").addEventListener(
+  "click", logout
+);
 
-  try {
-    if (await refreshSession()) {
-      await Promise.all([refreshDashboard(), loadReviewQueue()]);
+$("refreshButton").addEventListener(
+  "click",
+  async () => {
+    if (busy) return;
+    setBusy(true);
+
+    try {
+      if (await refreshSession()) {
+        await Promise.all([
+          refreshDashboard(),
+          loadReviewQueue()
+        ]);
+      }
+    } catch (error) {
+      setMessage(
+        "Session check failed: " +
+        error.message,
+        "error"
+      );
+    } finally {
+      setBusy(false);
     }
-  } catch (error) {
-    setMessage("Session check failed: " + error.message, "error");
-  } finally {
-    setBusy(false);
   }
-});
+);
 
-$("refreshDataButton").addEventListener("click", refreshDashboard);
+$("refreshDataButton").addEventListener(
+  "click",
+  refreshDashboard
+);
 
-$("loadReviewButton").addEventListener("click", () => {
-  clearTimeout(reviewSearchTimer);
-  reviewSearchTimer = null;
-  loadReviewQueue();
-});
+$("refreshRescanButton").addEventListener(
+  "click",
+  refreshRescan
+);
 
-$("reviewSearch").addEventListener("input", scheduleReviewSearch);
-$("clearSearchButton").addEventListener("click", clearReviewSearch);
+$("startRescanButton").addEventListener(
+  "click",
+  startRescan
+);
 
-$("previousPage").addEventListener("click", async () => {
-  if (loadingReview || reviewOffset === 0 || !reviewApiCompatible) return;
-  clearTimeout(reviewSearchTimer);
-  reviewSearchTimer = null;
-  reviewOffset = Math.max(0, reviewOffset - REVIEW_PAGE_SIZE);
-  await loadReviewQueue();
-});
-
-$("nextPage").addEventListener("click", async () => {
-  if (
-    loadingReview || !reviewApiCompatible ||
-    reviewOffset + REVIEW_PAGE_SIZE >= reviewTotal
-  ) return;
-
-  clearTimeout(reviewSearchTimer);
-  reviewSearchTimer = null;
-  reviewOffset += REVIEW_PAGE_SIZE;
-  await loadReviewQueue();
-});
-
-$("resolutionAction").addEventListener("change", () => {
-  $("matchFields").hidden =
-    $("resolutionAction").value === "reject";
-});
-
-$("resolutionForm").addEventListener("submit", submitResolution);
-$("cancelResolutionButton").addEventListener("click", closeResolution);
-
-$("copyLogButton").addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(logLines.join("\n"));
-    setMessage("Diagnostic log copied.", "success");
-  } catch {
-    setMessage("Could not copy diagnostic log.", "error");
+$("loadReviewButton").addEventListener(
+  "click",
+  () => {
+    clearTimeout(reviewSearchTimer);
+    reviewSearchTimer = null;
+    loadReviewQueue();
   }
-});
+);
 
-$("clearLogButton").addEventListener("click", () => {
-  logLines = [];
-  $("diagnostics").textContent = "Log cleared.";
-});
+$("reviewSearch").addEventListener(
+  "input",
+  scheduleReviewSearch
+);
+
+$("clearSearchButton").addEventListener(
+  "click",
+  clearReviewSearch
+);
+
+$("previousPage").addEventListener(
+  "click",
+  async () => {
+    if (
+      loadingReview ||
+      reviewOffset === 0 ||
+      !reviewApiCompatible
+    ) {
+      return;
+    }
+
+    clearTimeout(reviewSearchTimer);
+    reviewSearchTimer = null;
+
+    reviewOffset = Math.max(
+      0,
+      reviewOffset - REVIEW_PAGE_SIZE
+    );
+
+    await loadReviewQueue();
+  }
+);
+
+$("nextPage").addEventListener(
+  "click",
+  async () => {
+    if (
+      loadingReview ||
+      !reviewApiCompatible ||
+      reviewOffset + REVIEW_PAGE_SIZE >= reviewTotal
+    ) {
+      return;
+    }
+
+    clearTimeout(reviewSearchTimer);
+    reviewSearchTimer = null;
+
+    reviewOffset += REVIEW_PAGE_SIZE;
+    await loadReviewQueue();
+  }
+);
+
+$("resolutionAction").addEventListener(
+  "change",
+  () => {
+    $("matchFields").hidden =
+      $("resolutionAction").value === "reject";
+  }
+);
+
+$("resolutionForm").addEventListener(
+  "submit",
+  submitResolution
+);
+
+$("cancelResolutionButton").addEventListener(
+  "click",
+  closeResolution
+);
+
+$("copyLogButton").addEventListener(
+  "click",
+  async () => {
+    try {
+      await navigator.clipboard.writeText(
+        logLines.join("\n")
+      );
+
+      setMessage(
+        "Diagnostic log copied.",
+        "success"
+      );
+    } catch {
+      setMessage(
+        "Could not copy diagnostic log.",
+        "error"
+      );
+    }
+  }
+);
+
+$("clearLogButton").addEventListener(
+  "click",
+  () => {
+    logLines = [];
+    $("diagnostics").textContent =
+      "Log cleared.";
+  }
+);
 
 // ============================================================
 // INITIALIZATION
 // ============================================================
 
-log("Hive Census Administration initialized — search UI v0.2.3");
+log(
+  "Hive Census Administration initialized — UI v0.2.4"
+);
 
 refreshSession()
   .then(async isAuthenticated => {
     if (isAuthenticated) {
-      await Promise.all([refreshDashboard(), loadReviewQueue()]);
+      await Promise.all([
+        refreshDashboard(),
+        loadReviewQueue()
+      ]);
     }
   })
   .catch(error => {
     authenticated = false;
     $("adminPanel").hidden = true;
-    $("sessionInfo").textContent = "Unable to check session.";
-    log("Initial session check failed: " + error.message);
-    setMessage(error.message, "error");
+    $("sessionInfo").textContent =
+      "Unable to check session.";
+
+    log(
+      "Initial session check failed: " +
+      error.message
+    );
+
+    setMessage(
+      error.message,
+      "error"
+    );
   });
 </script>
 </body>
