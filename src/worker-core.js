@@ -1,8 +1,7 @@
-
 import { classifyLocation, getClassifierVersion } from "./location-classifier.js";
 import { geocodeLocation, getGeocoderVersion } from "./location-geocoder.js";
 
-const VERSION = "0.9.9";
+const VERSION = "0.9.11";
 const HIVE_RPC = "https://api.hive.blog";
 const CENSUS_ID = "hive_census";
 const PROTOCOL_VERSION = 1;
@@ -547,7 +546,6 @@ async function scanHive(env, requestedBlocks) {
   return {
     previous_cursor: initialCursor,
     last_scanned_block: cursor,
-    blocks_scanned: blocksScanned,
     census_operations: censusOperations,
     sets_applied: setsApplied,
     unsets_applied: unsetsApplied,
@@ -736,46 +734,32 @@ function getTransactionId(block, index) {
 // ============================================================
 
 async function runScheduledProfileImporter(env) {
-  const complete = await getProfileMeta(
-    env, "import_complete", "false"
-  );
-
+  const complete = await getProfileMeta(env, "import_complete", "false");
   if (complete !== "true") {
     try {
-      await importProfileBatch(
-        env, PROFILE_ACCOUNTS_PER_RUN
-      );
+      await importProfileBatch(env, PROFILE_ACCOUNTS_PER_RUN);
       await setProfileMeta(env, "last_import_error", "");
     } catch (error) {
-      await setProfileMeta(
-        env,
-        "last_import_error",
-        String(error?.message || error)
-      );
+      await setProfileMeta(env, "last_import_error", String(error?.message || error));
       throw error;
     }
     return;
   }
-
-  const state = await getProfileMeta(
-    env, "rescan_state", "idle"
-  );
-
-  if (state !== "running") return;
-
+  if (await getProfileMeta(env, "rescan_state", "idle") !== "running") return;
+  const token = crypto.randomUUID();
+  if (!await acquireRescanLease(env, token)) return;
   try {
-    const result = await rescanProfileBatch(
-      env, PROFILE_ACCOUNTS_PER_RUN
-    );
-    await setProfileMeta(env, "rescan_last_error", "");
+    const result = await rescanProfileBatch(env, PROFILE_ACCOUNTS_PER_RUN, token);
     console.log("[Rescan]", JSON.stringify(result));
   } catch (error) {
-    await setProfileMeta(
-      env,
-      "rescan_last_error",
-      String(error?.message || error)
-    );
+    await env.DB.prepare(`
+      UPDATE profile_import_meta SET value = ? WHERE key = 'rescan_last_error'
+      AND EXISTS (SELECT 1 FROM profile_import_meta
+                  WHERE key = 'rescan_lease' AND json_extract(value, '$.token') = ?)
+    `).bind(String(error?.message || error), token).run();
     throw error;
+  } finally {
+    await releaseRescanLease(env, token);
   }
 }
 
@@ -901,334 +885,235 @@ async function importProfileBatch(env, maxAccounts) {
 }
 
 // ============================================================
-// MANUAL FULL PROFILE RESCAN
+// MANUAL FULL PROFILE RESCAN — v0.9.11
 // ============================================================
 
-// Called only by the authenticated administrator API.
-// This function does not expose a public start endpoint.
-export async function startProfileRescan(env) {
-  if (!env?.DB) {
-    throw new Error("D1 database is not configured");
-  }
+// One D1 row contains both token and expiry. Acquisition and renewal are
+// atomic UPDATE statements; every rescan write is fenced by that same row.
+const RESCAN_LEASE_SECONDS = 600;
+const RESCAN_INIT_SECONDS = 600;
 
-  const importComplete = await getProfileMeta(
-    env, "import_complete", "false"
-  );
-
-  if (importComplete !== "true") {
-    return {
-      ok: false,
-      code: "INITIAL_IMPORT_INCOMPLETE",
-      error: "Initial profile import is not complete"
-    };
-  }
-
-  const startedAt = new Date().toISOString();
-  const jobId = crypto.randomUUID();
-
-  // Initialise the state row if this is the first rescan.
-  await env.DB.prepare(`
-    INSERT INTO profile_import_meta (key, value)
-    VALUES ('rescan_state', 'idle')
-    ON CONFLICT(key) DO NOTHING
-  `).run();
-
-  // Atomic acquisition: only one start request can change
-  // the state to running.
-  const lock = await env.DB.prepare(`
-    UPDATE profile_import_meta
-    SET value = 'running'
-    WHERE key = 'rescan_state'
-      AND value != 'running'
-      AND EXISTS (
-        SELECT 1
-        FROM profile_import_meta
-        WHERE key = 'import_complete'
-          AND value = 'true'
-      )
-  `).run();
-
-  if (Number(lock.meta?.changes || 0) !== 1) {
-    return {
-      ok: false,
-      code: "RESCAN_ALREADY_RUNNING",
-      error: "A profile rescan is already running"
-    };
-  }
-
-  // Initialise a new run. The last successful completion
-  // timestamp is deliberately NOT reset.
-  await env.DB.batch([
-    metaStatement(env, "rescan_job_id", jobId),
-    metaStatement(env, "rescan_last_account", ""),
-    metaStatement(env, "rescan_accounts_scanned", "0"),
-    metaStatement(env, "rescan_locations_found", "0"),
-    metaStatement(env, "rescan_locations_removed", "0"),
-    metaStatement(env, "rescan_started_at", startedAt),
-    metaStatement(env, "rescan_completed_at", ""),
-    metaStatement(env, "rescan_last_run", ""),
-    metaStatement(env, "rescan_last_error", "")
-  ]);
-
-  return {
-    ok: true,
-    version: VERSION,
-    job_id: jobId,
-    state: "running",
-    started_at: startedAt,
-    accounts_per_scheduled_run: PROFILE_ACCOUNTS_PER_RUN
-  };
+function leaseGuardSql() {
+  return `EXISTS (
+    SELECT 1 FROM profile_import_meta lease
+    WHERE lease.key = 'rescan_lease'
+      AND json_extract(lease.value, '$.token') = ?
+      AND CAST(json_extract(lease.value, '$.until') AS INTEGER) >= unixepoch()
+  ) AND EXISTS (
+    SELECT 1 FROM profile_import_meta state
+    WHERE state.key = 'rescan_state' AND state.value = 'running'
+  ) AND EXISTS (
+    SELECT 1 FROM profile_import_meta job
+    WHERE job.key = 'rescan_job_id' AND job.value = ?
+  )`;
 }
 
-async function rescanProfileBatch(env, maxAccounts) {
-  const state = await getProfileMeta(
-    env, "rescan_state", "idle"
-  );
-
-  if (state !== "running") {
-    return { processed: 0, state };
-  }
-
-  const jobId = await getProfileMeta(
-    env, "rescan_job_id", ""
-  );
-
-  if (!jobId) {
-    throw new Error("Rescan job ID is missing");
-  }
-
-  let lastAccount = await getProfileMeta(
-    env, "rescan_last_account", ""
-  );
-
-  let scanned = 0;
-  let locationsFound = 0;
-  let locationsRemoved = 0;
-  let reachedEnd = false;
-
-  while (scanned < maxAccounts) {
-    const remaining = maxAccounts - scanned;
-
-    const lookupLimit = Math.min(
-      PROFILE_LOOKUP_BATCH_SIZE,
-      remaining + (lastAccount ? 1 : 0)
-    );
-
-    const names = await lookupHiveAccounts(
-      lastAccount, lookupLimit
-    );
-
-    if (!names.length) {
-      reachedEnd = true;
-      break;
-    }
-
-    const newNames = names.filter(
-      name => name > lastAccount
-    );
-
-    if (!newNames.length) {
-      reachedEnd = true;
-      break;
-    }
-
-    const batchNames = newNames.slice(
-      0,
-      Math.min(PROFILE_FETCH_BATCH_SIZE, remaining)
-    );
-
-    const accounts = await getHiveAccounts(batchNames);
-
-    if (!Array.isArray(accounts)) {
-      throw new Error(
-        "Hive get_accounts returned an invalid response during rescan"
-      );
-    }
-
-    const accountsByName = new Map(
-      accounts
-        .filter(account => account && account.name)
-        .map(account => [account.name, account])
-    );
-
-    const missingNames = batchNames.filter(
-      name => !accountsByName.has(name)
-    );
-
-    if (missingNames.length) {
-      throw new Error(
-        "Incomplete Hive get_accounts response during rescan: " +
-        missingNames.slice(0, 5).join(", ")
-      );
-    }
-
-    for (const name of batchNames) {
-      const account = accountsByName.get(name);
-      const location = extractProfileLocation(account);
-
-      const statements = [];
-      let removed = 0;
-
-      if (location) {
-        const normalized = normalizeLocation(location);
-        const key = makeLocationKey(normalized);
-
-        statements.push(
-          locationMatchInsertStatement(env, key, location)
-        );
-        statements.push(
-          profileLocationUpsertStatement(
-            env,
-            name,
-            location,
-            normalized,
-            key,
-            account.last_account_update || null
-          )
-        );
-      } else {
-        statements.push(
-          env.DB.prepare(`
-            DELETE FROM profile_locations
-            WHERE account = ?
-          `).bind(name)
-        );
-      }
-
-      // These metadata changes and the profile change
-      // are committed together in one D1 transaction.
-      statements.push(
-        env.DB.prepare(`
-          UPDATE profile_import_meta
-          SET value = ?
-          WHERE key = 'rescan_last_account'
-        `).bind(name)
-      );
-
-      statements.push(
-        incrementProfileMetaStatement(
-          env, "rescan_accounts_scanned", 1
-        )
-      );
-
-      if (location) {
-        statements.push(
-          incrementProfileMetaStatement(
-            env, "rescan_locations_found", 1
-          )
-        );
-      } else {
-        // Count actual deleted rows using changes()
-        // immediately after the DELETE, before other
-        // modifications alter the connection counter.
-        // A separate statement below is not reliable
-        // for this, so removal is recorded from the
-        // DELETE result after the transaction.
-      }
-
-      const results = await env.DB.batch(statements);
-
-      if (!location) {
-        removed = Number(results[0]?.meta?.changes || 0);
-
-        if (removed) {
-          await incrementProfileMeta(
-            env, "rescan_locations_removed", removed
-          );
-        }
-      }
-
-      scanned++;
-      lastAccount = name;
-
-      if (location) locationsFound++;
-      locationsRemoved += removed;
-    }
-  }
-
-  const now = new Date().toISOString();
-
-  if (reachedEnd) {
-    // Completion is recorded only after the last account
-    // has been processed successfully.
-    await env.DB.batch([
-      metaStatement(env, "rescan_state", "completed"),
-      metaStatement(env, "rescan_completed_at", now),
-      metaStatement(env, "rescan_last_completed_at", now),
-      metaStatement(env, "rescan_last_run", now),
-      metaStatement(env, "rescan_last_error", "")
-    ]);
-  } else {
-    await setProfileMeta(env, "rescan_last_run", now);
-  }
-
-  return {
-    job_id: jobId,
-    processed: scanned,
-    locations_found: locationsFound,
-    locations_removed: locationsRemoved,
-    last_account: lastAccount,
-    state: reachedEnd ? "completed" : "running"
-  };
+async function acquireRescanLease(env, token) {
+  await env.DB.prepare(`INSERT OR IGNORE INTO profile_import_meta(key,value)
+    VALUES ('rescan_lease', '{"token":"","until":0}')`).run();
+  const result = await env.DB.prepare(`
+    UPDATE profile_import_meta SET value = json_object('token', ?, 'until', unixepoch() + ?)
+    WHERE key = 'rescan_lease'
+      AND (COALESCE(CAST(json_extract(value, '$.until') AS INTEGER), 0) < unixepoch()
+           OR json_extract(value, '$.token') = '')
+      AND EXISTS (SELECT 1 FROM profile_import_meta WHERE key='rescan_state' AND value='running')
+  `).bind(token, RESCAN_LEASE_SECONDS).run();
+  return Number(result.meta?.changes || 0) === 1;
 }
 
-function incrementProfileMetaStatement(env, key, amount) {
+async function renewRescanLease(env, token) {
+  const result = await env.DB.prepare(`
+    UPDATE profile_import_meta SET value = json_set(value, '$.until', unixepoch() + ?)
+    WHERE key='rescan_lease' AND json_extract(value, '$.token') = ?
+      AND CAST(json_extract(value, '$.until') AS INTEGER) >= unixepoch()
+      AND EXISTS (SELECT 1 FROM profile_import_meta WHERE key='rescan_state' AND value='running')
+  `).bind(RESCAN_LEASE_SECONDS, token).run();
+  if (Number(result.meta?.changes || 0) !== 1) throw new Error('Rescan lease lost');
+}
+
+async function releaseRescanLease(env, token) {
+  await env.DB.prepare(`UPDATE profile_import_meta
+    SET value = '{"token":"","until":0}'
+    WHERE key='rescan_lease' AND json_extract(value, '$.token') = ?
+  `).bind(token).run();
+}
+
+// Guard all mutations with the current lease owner and job ID. D1.batch is
+// transactional, and the final cursor update is checked for fencing success.
+function guardedMetaUpdate(env, key, value, token, jobId) {
+  return env.DB.prepare(`UPDATE profile_import_meta SET value = ?
+    WHERE key = ? AND ${leaseGuardSql()}`)
+    .bind(String(value), key, token, jobId);
+}
+function guardedIncrement(env, key, amount, token, jobId) {
+  return env.DB.prepare(`UPDATE profile_import_meta
+    SET value = CAST(CAST(value AS INTEGER) + ? AS TEXT)
+    WHERE key = ? AND ${leaseGuardSql()}`)
+    .bind(amount, key, token, jobId);
+}
+function guardedLocationInsert(env, key, raw, token, jobId) {
+  return env.DB.prepare(`INSERT OR IGNORE INTO location_matches
+    (location_key, original_example, status, source)
+    SELECT ?, ?, 'pending', 'hive_profile' WHERE ${leaseGuardSql()}`)
+    .bind(key, raw, token, jobId);
+}
+function guardedProfileUpsert(env, account, raw, normalized, key, updated, token, jobId) {
   return env.DB.prepare(`
-    INSERT INTO profile_import_meta (key, value)
-    VALUES (?, ?)
-    ON CONFLICT(key) DO UPDATE SET
-      value = CAST(
-        CAST(profile_import_meta.value AS INTEGER) + ?
-        AS TEXT
-      )
-  `).bind(key, String(amount), amount);
+    INSERT INTO profile_locations (account, raw_location, normalized_location,
+      location_key, match_id, match_status, last_account_update, fetched_at)
+    SELECT ?, ?, ?, ?, m.id,
+      COALESCE((SELECT o.status FROM profile_location_overrides o
+                WHERE o.account = ? AND o.match_id = m.id), m.status),
+      ?, CURRENT_TIMESTAMP
+    FROM location_matches m
+    WHERE m.location_key = ? AND ${leaseGuardSql()}
+    ON CONFLICT(account) DO UPDATE SET
+      raw_location=excluded.raw_location,
+      normalized_location=excluded.normalized_location,
+      location_key=excluded.location_key,
+      match_id=excluded.match_id,
+      match_status=excluded.match_status,
+      last_account_update=excluded.last_account_update,
+      fetched_at=CURRENT_TIMESTAMP
+  `).bind(account, raw, normalized, key, account, updated, key, token, jobId);
 }
 
-async function incrementProfileMeta(env, key, amount) {
-  await incrementProfileMetaStatement(
-    env, key, amount
-  ).run();
+// Initialisation state embeds its own expiry, allowing recovery if the Worker
+// dies before publishing 'running'. It is never exposed to the cron runner.
+export async function startProfileRescan(env) {
+  if (!env?.DB) throw new Error('D1 database is not configured');
+  if (await getProfileMeta(env, 'import_complete', 'false') !== 'true') {
+    return { ok:false, code:'INITIAL_IMPORT_INCOMPLETE', error:'Initial profile import is not complete' };
+  }
+  const jobId = crypto.randomUUID();
+  const startedAt = new Date().toISOString();
+  const initValue = `initializing:${Math.floor(Date.now()/1000) + RESCAN_INIT_SECONDS}:${jobId}`;
+  await env.DB.prepare(`INSERT OR IGNORE INTO profile_import_meta(key,value) VALUES ('rescan_state','idle')`).run();
+  const lock = await env.DB.prepare(`
+    UPDATE profile_import_meta SET value = ?
+    WHERE key = 'rescan_state'
+      AND (value IN ('idle','completed')
+           OR (value LIKE 'initializing:%'
+               AND CAST(substr(value, 14, 10) AS INTEGER) < unixepoch()))
+      AND EXISTS (SELECT 1 FROM profile_import_meta WHERE key='import_complete' AND value='true')
+  `).bind(initValue).run();
+  if (Number(lock.meta?.changes || 0) !== 1)
+    return {ok:false, code:'RESCAN_ALREADY_RUNNING', error:'A profile rescan is already active'};
+
+  // Initialise all fields in one transaction. A stale initializer cannot
+  // publish running if its initialization token has been superseded.
+  const fields = {
+    rescan_job_id:jobId, rescan_last_account:'', rescan_accounts_scanned:'0',
+    rescan_locations_found:'0', rescan_locations_removed:'0',
+    rescan_started_at:startedAt, rescan_completed_at:'',
+    rescan_last_run:'', rescan_last_error:'',
+    rescan_lease:'{"token":"","until":0}'
+  };
+  await env.DB.prepare(`INSERT OR IGNORE INTO profile_import_meta(key,value) VALUES ('rescan_last_completed_at','')`).run();
+  const statements = Object.entries(fields).map(([key,value]) =>
+    env.DB.prepare(`INSERT INTO profile_import_meta(key,value)
+      SELECT ?, ? WHERE EXISTS (SELECT 1 FROM profile_import_meta
+                               WHERE key='rescan_state' AND value=?)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
+      .bind(key,value,initValue));
+  statements.push(env.DB.prepare(`UPDATE profile_import_meta SET value='running'
+    WHERE key='rescan_state' AND value=?`).bind(initValue));
+  const results = await env.DB.batch(statements);
+  if (Number(results.at(-1)?.meta?.changes || 0) !== 1)
+    throw new Error('Rescan initialization ownership lost');
+  return {ok:true,version:VERSION,job_id:jobId,state:'running',started_at:startedAt,
+          accounts_per_scheduled_run:PROFILE_ACCOUNTS_PER_RUN};
+}
+
+async function rescanProfileBatch(env, maxAccounts, token) {
+  if (await getProfileMeta(env,'rescan_state','idle') !== 'running')
+    return {processed:0,state:'idle'};
+  const jobId = await getProfileMeta(env,'rescan_job_id','');
+  if (!jobId) throw new Error('Rescan job ID is missing');
+  let lastAccount = await getProfileMeta(env,'rescan_last_account','');
+  let scanned=0, locationsFound=0, locationsRemoved=0, reachedEnd=false;
+  while (scanned < maxAccounts) {
+    await renewRescanLease(env,token);
+    const remaining = maxAccounts-scanned;
+    const names = await lookupHiveAccounts(lastAccount,
+      Math.min(PROFILE_LOOKUP_BATCH_SIZE, remaining+(lastAccount?1:0)));
+    if (!names.length) { reachedEnd=true; break; }
+    const newNames=names.filter(name=>name>lastAccount);
+    if (!newNames.length) { reachedEnd=true; break; }
+    const batchNames=newNames.slice(0,Math.min(PROFILE_FETCH_BATCH_SIZE,remaining));
+    const accounts=await getHiveAccounts(batchNames);
+    if (!Array.isArray(accounts)) throw new Error('Invalid get_accounts response during rescan');
+    const byName=new Map(accounts.filter(a=>a&&a.name).map(a=>[a.name,a]));
+    const missing=batchNames.filter(name=>!byName.has(name));
+    if (missing.length) throw new Error('Incomplete get_accounts response: '+missing.slice(0,5).join(', '));
+    for (const name of batchNames) {
+      await renewRescanLease(env,token);
+      const account=byName.get(name), location=extractProfileLocation(account);
+      const statements=[];
+      if (location) {
+        const normalized=normalizeLocation(location), key=makeLocationKey(normalized);
+        statements.push(guardedLocationInsert(env,key,location,token,jobId));
+        statements.push(guardedProfileUpsert(env,name,location,normalized,key,
+          account.last_account_update||null,token,jobId));
+      } else {
+        statements.push(env.DB.prepare(`DELETE FROM profile_locations
+          WHERE account=? AND ${leaseGuardSql()}`).bind(name,token,jobId));
+        // changes() reads the DELETE's affected row count inside the same batch.
+        statements.push(env.DB.prepare(`UPDATE profile_import_meta
+          SET value=CAST(CAST(value AS INTEGER)+changes() AS TEXT)
+          WHERE key='rescan_locations_removed' AND ${leaseGuardSql()}`)
+          .bind(token,jobId));
+      }
+      statements.push(guardedIncrement(env,'rescan_accounts_scanned',1,token,jobId));
+      if (location) statements.push(guardedIncrement(env,'rescan_locations_found',1,token,jobId));
+      // Cursor last. If it does not advance, all preceding writes were fenced out.
+      statements.push(guardedMetaUpdate(env,'rescan_last_account',name,token,jobId));
+      const results=await env.DB.batch(statements);
+      if (Number(results.at(-1)?.meta?.changes||0)!==1)
+        throw new Error('Rescan ownership lost before database commit');
+      const removed=location?0:Number(results[0]?.meta?.changes||0);
+      scanned++;lastAccount=name;
+      if(location) locationsFound++;
+      locationsRemoved+=removed;
+    }
+  }
+  await renewRescanLease(env,token);
+  const now=new Date().toISOString();
+  const statements=[guardedMetaUpdate(env,'rescan_last_run',now,token,jobId),
+                    guardedMetaUpdate(env,'rescan_last_error','',token,jobId)];
+  if (reachedEnd) {
+    statements.push(guardedMetaUpdate(env,'rescan_completed_at',now,token,jobId));
+    statements.push(guardedMetaUpdate(env,'rescan_last_completed_at',now,token,jobId));
+    statements.push(env.DB.prepare(`UPDATE profile_import_meta SET value='completed'
+      WHERE key='rescan_state' AND ${leaseGuardSql()}`).bind(token,jobId));
+  }
+  const results=await env.DB.batch(statements);
+  if (Number(results.at(-1)?.meta?.changes||0)!==1)
+    throw new Error('Rescan ownership lost during finalization');
+  return {job_id:jobId,processed:scanned,locations_found:locationsFound,
+    locations_removed:locationsRemoved,last_account:lastAccount,
+    state:reachedEnd?'completed':'running'};
 }
 
 export async function getProfileRescanStatus(env) {
-  const result = await env.DB.prepare(`
-    SELECT key, value
-    FROM profile_import_meta
-    WHERE key LIKE 'rescan_%'
-  `).all();
 
-  const meta = Object.fromEntries(
-    result.results.map(row => [row.key, row.value])
-  );
 
-  const importComplete = await getProfileMeta(
-    env, "import_complete", "false"
-  );
-
+    const result=await env.DB.prepare(`SELECT key,value FROM profile_import_meta WHERE key LIKE 'rescan_%'`).all();
+  const meta=Object.fromEntries(result.results.map(row=>[row.key,row.value]));
+  const complete=await getProfileMeta(env,'import_complete','false');
+  const rawState=meta.rescan_state||'idle';
   return {
-    ok: true,
-    version: VERSION,
-    available: importComplete === "true",
-    state: meta.rescan_state || "idle",
-    job_id: meta.rescan_job_id || "",
-    started_at: meta.rescan_started_at || "",
-    completed_at: meta.rescan_completed_at || "",
-    last_completed_full_scan:
-      meta.rescan_last_completed_at || "",
-    last_account: meta.rescan_last_account || "",
-    accounts_scanned: Number(
-      meta.rescan_accounts_scanned || 0
-    ),
-    locations_found: Number(
-      meta.rescan_locations_found || 0
-    ),
-    locations_removed: Number(
-      meta.rescan_locations_removed || 0
-    ),
-    last_run: meta.rescan_last_run || "",
-    last_error: meta.rescan_last_error || "",
-    accounts_per_scheduled_run:
-      PROFILE_ACCOUNTS_PER_RUN
+    ok:true,version:VERSION,available:complete==='true',
+    state:rawState.startsWith('initializing:')?'initializing':rawState,
+    job_id:meta.rescan_job_id||'',started_at:meta.rescan_started_at||'',
+    completed_at:meta.rescan_completed_at||'',
+    last_completed_full_scan:meta.rescan_last_completed_at||'',
+    last_account:meta.rescan_last_account||'',
+    accounts_scanned:Number(meta.rescan_accounts_scanned||0),
+    locations_found:Number(meta.rescan_locations_found||0),
+    locations_removed:Number(meta.rescan_locations_removed||0),
+    last_run:meta.rescan_last_run||'',last_error:meta.rescan_last_error||'',
+    accounts_per_scheduled_run:PROFILE_ACCOUNTS_PER_RUN
   };
 }
 
@@ -2306,3 +2191,4 @@ function errorResponse(error) {
     500
   );
 }
+    
