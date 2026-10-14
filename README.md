@@ -62,7 +62,7 @@ A detailed technical article describing the architecture, implementation decisio
 
 **Technical documentation and development case study:**
 
-**[Read the full technical documentation](INSERT_HIVE_DOCUMENTATION_POST_URL_HERE)**
+**[Read the full technical documentation](https://hive.blog/hive-139531/@jocieprosza/hive-census-building-a-geographical-map-of-the-hive-community-documentation)**
 
 The documentation covers:
 
@@ -444,7 +444,7 @@ The project is provided for informational and community purposes.
 
 - **Live application:** https://app.hive-census.workers.dev/
 - **Protocol specification:** [PROTOCOL.md](./PROTOCOL.md)
-- **Technical documentation:** [Hive Census — Technical Documentation](INSERT_HIVE_DOCUMENTATION_POST_URL_HERE)
+- **Technical documentation:** [Hive Census — Technical Documentation](https://hive.blog/hive-139531/@jocieprosza/hive-census-building-a-geographical-map-of-the-hive-community-documentation)
 - **Hive blockchain:** https://hive.io/
 
 ---
